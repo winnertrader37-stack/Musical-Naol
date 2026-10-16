@@ -2,8 +2,8 @@
 
 /* =========================================================
    NAOL MUSIC STUDIO
-   Complete Audio Mixing, Keyboard Recording & Mastering
-   Audio + Recorded Keyboard Events Included in Auto Adjust
+   Audio Mixing, Auto Produce, Auto Accompaniment,
+   Keyboard Recording, Mastering and WAV Export
    ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
     audioContext: null,
     masterGain: null,
     masterAnalyser: null,
+
     mediaStream: null,
     mediaRecorder: null,
     recordedChunks: [],
@@ -25,7 +26,7 @@ document.addEventListener("DOMContentLoaded", () => {
     activeKeyboardNotes: new Map(),
     keyboardRecording: false,
     keyboardRecordStart: 0,
-    keyboardMixGain: 1,
+    keyboardMixGain: 0.7,
     keyboardPlaybackNodes: [],
 
     isPlaying: false,
@@ -34,14 +35,20 @@ document.addEventListener("DOMContentLoaded", () => {
     animationFrame: null,
 
     exportInProgress: false,
-
     effects: {},
     eq: {},
     masterChain: {},
     reverbBuffer: null,
 
     currentPreset: "balanced",
-    toastTimer: null
+    toastTimer: null,
+
+    autoProduced: false,
+    autoProduceSettings: {
+      bpm: 90,
+      key: "C",
+      progression: "pop"
+    }
   };
 
   const NOTE_NAMES = [
@@ -65,20 +72,20 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const DEFAULTS = {
-    masterVolume: 0.85,
+    masterVolume: 0.8,
     bass: 0,
     mid: 0,
     treble: 0,
     reverb: 0.12,
-    delay: 0.08,
-    compressor: 0.55,
+    delay: 0.06,
+    compressor: 0.6,
     noiseGate: 0.02,
-    chorus: 0.08,
+    chorus: 0.06,
     limiter: 0.85,
     pitch: 0,
     speed: 1,
     pan: 0,
-    keyboardVolume: 0.65
+    keyboardVolume: 0.45
   };
 
   /* =========================================================
@@ -106,34 +113,33 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
 
     const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
+    const secs = Math.floor(seconds % 60);
 
-    return `${String(minutes).padStart(2, "0")}:${String(
-      remainingSeconds
-    ).padStart(2, "0")}`;
+    return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   }
 
   function notify(message, type = "info") {
     const toast = $("toast");
 
-    if (toast) {
-      toast.textContent = message;
-      toast.dataset.type = type;
-      toast.classList.add("show");
-
-      clearTimeout(state.toastTimer);
-
-      state.toastTimer = setTimeout(() => {
-        toast.classList.remove("show");
-      }, 3500);
-    } else {
+    if (!toast) {
       console.log(`[Naol Music Studio] ${message}`);
+      return;
     }
+
+    toast.textContent = message;
+    toast.dataset.type = type;
+    toast.classList.add("show");
+
+    clearTimeout(state.toastTimer);
+
+    state.toastTimer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, 4000);
   }
 
   function setStatus(message) {
-    const status = $("appStatus");
-    if (status) status.textContent = message;
+    const element = $("appStatus");
+    if (element) element.textContent = message;
   }
 
   function downloadBlob(blob, filename) {
@@ -154,9 +160,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       node.disconnect();
-    } catch (_) {
-      // Already disconnected.
-    }
+    } catch (_) {}
   }
 
   function getAudioContext() {
@@ -185,11 +189,30 @@ document.addEventListener("DOMContentLoaded", () => {
      AUDIO ENGINE
      ========================================================= */
 
+  function createImpulseResponse(ctx, seconds = 2, decay = 2) {
+    const length = Math.floor(ctx.sampleRate * seconds);
+    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+
+    for (let channel = 0; channel < 2; channel++) {
+      const data = impulse.getChannelData(channel);
+
+      for (let i = 0; i < length; i++) {
+        const progress = i / length;
+        data[i] = (Math.random() * 2 - 1) *
+          Math.pow(1 - progress, decay);
+      }
+    }
+
+    return impulse;
+  }
+
   function buildAudioEngine() {
     const ctx = state.audioContext;
 
     const masterGain = ctx.createGain();
     const analyser = ctx.createAnalyser();
+
+    analyser.fftSize = 2048;
 
     const bass = ctx.createBiquadFilter();
     bass.type = "lowshelf";
@@ -220,12 +243,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const reverbSend = ctx.createGain();
     const reverbReturn = ctx.createGain();
-
-    reverbSend.gain.value = 0;
-    reverbReturn.gain.value = 0.35;
-
     const reverb = ctx.createConvolver();
+
     reverb.buffer = createImpulseResponse(ctx, 2.2, 2.4);
+    reverbSend.gain.value = 0;
+    reverbReturn.gain.value = 0.3;
 
     reverbSend.connect(reverb);
     reverb.connect(reverbReturn);
@@ -237,9 +259,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const delayReturn = ctx.createGain();
 
     delay.delayTime.value = 0.28;
-    delayFeedback.gain.value = 0.22;
+    delayFeedback.gain.value = 0.2;
     delaySend.gain.value = 0;
-    delayReturn.gain.value = 0.35;
+    delayReturn.gain.value = 0.3;
 
     delaySend.connect(delay);
     delay.connect(delayFeedback);
@@ -255,9 +277,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     chorusDelay.delayTime.value = 0.025;
     chorusLFO.frequency.value = 0.7;
-    chorusDepth.gain.value = 0.008;
+    chorusDepth.gain.value = 0.004;
     chorusSend.gain.value = 0;
-    chorusReturn.gain.value = 0.25;
+    chorusReturn.gain.value = 0.2;
 
     chorusLFO.connect(chorusDepth);
     chorusDepth.connect(chorusDelay.delayTime);
@@ -279,11 +301,13 @@ document.addEventListener("DOMContentLoaded", () => {
     state.masterAnalyser = analyser;
 
     state.eq = { bass, mid, treble };
+
     state.effects = {
       compressor,
       limiter,
       reverbSend,
       reverbReturn,
+      reverb,
       delaySend,
       delay,
       delayFeedback,
@@ -292,8 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
       chorusDelay,
       chorusLFO,
       chorusDepth,
-      chorusReturn,
-      reverb
+      chorusReturn
     };
 
     state.masterChain = {
@@ -308,24 +331,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     applyAllControls();
     startMasterMeter();
-  }
-
-  function createImpulseResponse(ctx, seconds = 2, decay = 2) {
-    const length = Math.floor(ctx.sampleRate * seconds);
-    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
-
-    for (let channel = 0; channel < 2; channel++) {
-      const data = impulse.getChannelData(channel);
-
-      for (let i = 0; i < length; i++) {
-        const progress = i / length;
-        data[i] =
-          (Math.random() * 2 - 1) *
-          Math.pow(1 - progress, decay);
-      }
-    }
-
-    return impulse;
   }
 
   /* =========================================================
@@ -367,9 +372,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getTrackDuration(track) {
-    if (!track || !track.buffer) return 0;
-
-    return track.buffer.duration;
+    return track && track.buffer ? track.buffer.duration : 0;
   }
 
   function getTotalDuration() {
@@ -380,22 +383,25 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     state.keyboardEvents.forEach((event) => {
-      const end = event.time + Math.max(0.05, event.duration || 0.2);
-      total = Math.max(total, end);
+      total = Math.max(
+        total,
+        (Number(event.time) || 0) +
+          Math.max(0.05, Number(event.duration) || 0.2)
+      );
     });
 
     return total;
   }
 
   /* =========================================================
-     UPLOAD AUDIO FILES
+     AUDIO UPLOAD
      ========================================================= */
 
   async function decodeAudioFile(file) {
     const ctx = getAudioContext();
     const arrayBuffer = await file.arrayBuffer();
 
-    return await ctx.decodeAudioData(arrayBuffer.slice(0));
+    return ctx.decodeAudioData(arrayBuffer.slice(0));
   }
 
   async function addAudioFile(file) {
@@ -408,6 +414,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setStatus("Audio loading...");
 
       const buffer = await decodeAudioFile(file);
+      const analysis = analyzeAudioBuffer(buffer);
 
       const track = {
         id: state.nextTrackId++,
@@ -425,7 +432,7 @@ document.addEventListener("DOMContentLoaded", () => {
         gainNode: null,
         panner: null,
         duration: buffer.duration,
-        originalRms: analyzeAudioBuffer(buffer).rms,
+        originalRms: analysis.rms,
         autoGain: 1
       };
 
@@ -454,10 +461,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     container.innerHTML = "";
 
-    if (state.tracks.length === 0) {
+    if (!state.tracks.length) {
       const empty = document.createElement("div");
       empty.className = "empty-tracks";
-      empty.textContent = "Audio upload godhi ykn keyboard irratti taphadhu.";
+      empty.textContent =
+        "Audio upload godhi ykn keyboard irratti taphadhu.";
       container.appendChild(empty);
       return;
     }
@@ -496,17 +504,10 @@ document.addEventListener("DOMContentLoaded", () => {
       volume.max = "1.5";
       volume.step = "0.01";
       volume.value = String(track.volume);
-      volume.setAttribute("aria-label", `Volume ${track.name}`);
 
       volume.addEventListener("input", () => {
         track.volume = Number(volume.value);
-        if (track.gainNode) {
-          track.gainNode.gain.setTargetAtTime(
-            track.muted ? 0 : track.volume * track.autoGain,
-            getAudioContext().currentTime,
-            0.015
-          );
-        }
+        updateTrackGain(track);
       });
 
       volumeLabel.appendChild(volume);
@@ -520,10 +521,10 @@ document.addEventListener("DOMContentLoaded", () => {
       pan.max = "1";
       pan.step = "0.01";
       pan.value = String(track.pan);
-      pan.setAttribute("aria-label", `Pan ${track.name}`);
 
       pan.addEventListener("input", () => {
         track.pan = Number(pan.value);
+
         if (track.panner) {
           track.panner.pan.setTargetAtTime(
             track.pan,
@@ -543,15 +544,7 @@ document.addEventListener("DOMContentLoaded", () => {
         event.stopPropagation();
 
         track.muted = !track.muted;
-
-        if (track.gainNode) {
-          track.gainNode.gain.setTargetAtTime(
-            track.muted ? 0 : track.volume * track.autoGain,
-            getAudioContext().currentTime,
-            0.015
-          );
-        }
-
+        updateAllTrackGains();
         renderTrackList();
       });
 
@@ -563,22 +556,7 @@ document.addEventListener("DOMContentLoaded", () => {
         event.stopPropagation();
 
         track.solo = !track.solo;
-
-        const anySolo = state.tracks.some((item) => item.solo);
-
-        state.tracks.forEach((item) => {
-          const shouldMute =
-            item.muted || (anySolo && !item.solo);
-
-          if (item.gainNode) {
-            item.gainNode.gain.setTargetAtTime(
-              shouldMute ? 0 : item.volume * item.autoGain,
-              getAudioContext().currentTime,
-              0.015
-            );
-          }
-        });
-
+        updateAllTrackGains();
         renderTrackList();
       });
 
@@ -611,6 +589,24 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  function updateTrackGain(track) {
+    if (!track || !track.gainNode) return;
+
+    const anySolo = state.tracks.some((item) => item.solo);
+    const shouldMute =
+      track.muted || (anySolo && !track.solo);
+
+    track.gainNode.gain.setTargetAtTime(
+      shouldMute ? 0 : track.volume * track.autoGain,
+      getAudioContext().currentTime,
+      0.015
+    );
+  }
+
+  function updateAllTrackGains() {
+    state.tracks.forEach(updateTrackGain);
+  }
+
   function removeTrack(trackId) {
     const track = state.tracks.find((item) => item.id === trackId);
     if (!track) return;
@@ -621,11 +617,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (state.activeTrackId === trackId) {
       state.activeTrackId =
-        state.tracks.length > 0 ? state.tracks[0].id : null;
+        state.tracks.length ? state.tracks[0].id : null;
     }
 
     renderTrackList();
     updateTrackDisplay();
+
     notify("Track haqameera.", "info");
   }
 
@@ -651,19 +648,19 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* =========================================================
-     TRACK PLAYBACK
+     PLAYBACK
      ========================================================= */
 
   function stopTrackSources() {
     state.tracks.forEach((track) => {
-      if (track.source) {
-        try {
-          track.source.stop();
-        } catch (_) {}
+      if (!track.source) return;
 
-        safeDisconnect(track.source);
-        track.source = null;
-      }
+      try {
+        track.source.stop();
+      } catch (_) {}
+
+      safeDisconnect(track.source);
+      track.source = null;
     });
   }
 
@@ -677,8 +674,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const source = ctx.createBufferSource();
     source.buffer = track.buffer;
 
-    const speed = clamp(numberValue("speedControl", 1), 0.5, 2);
-    source.playbackRate.value = speed;
+    source.playbackRate.value = clamp(
+      numberValue("speedControl", 1),
+      0.5,
+      2
+    );
 
     source.connect(track.gainNode);
 
@@ -686,19 +686,10 @@ document.addEventListener("DOMContentLoaded", () => {
     track.startedAt = ctx.currentTime;
     track.startOffset = offset;
 
-    const anySolo = state.tracks.some((item) => item.solo);
-    const shouldMute = track.muted || (anySolo && !track.solo);
-
-    track.gainNode.gain.setTargetAtTime(
-      shouldMute ? 0 : track.volume * track.autoGain,
-      ctx.currentTime,
-      0.015
-    );
+    updateTrackGain(track);
 
     source.onended = () => {
-      if (track.source === source) {
-        track.source = null;
-      }
+      if (track.source === source) track.source = null;
     };
 
     source.start(0, offset);
@@ -709,7 +700,9 @@ document.addEventListener("DOMContentLoaded", () => {
       return state.playStartOffset;
     }
 
-    const elapsed = state.audioContext.currentTime - state.playStartTime;
+    const elapsed =
+      state.audioContext.currentTime - state.playStartTime;
+
     const speed = clamp(numberValue("speedControl", 1), 0.5, 2);
 
     return state.playStartOffset + elapsed * speed;
@@ -721,7 +714,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const ctx = getAudioContext();
 
     if (!state.tracks.length && !state.keyboardEvents.length) {
-      notify("Duraan audio ykn keyboard performance hin jiru.", "error");
+      notify("Audio ykn keyboard performance hin jiru.", "error");
       return;
     }
 
@@ -770,16 +763,23 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     updateTransportButtons();
-    updatePlaybackUI();
+    updatePlaybackUIStopped();
     setStatus("Stopped");
   }
 
   function updateTransportButtons() {
-    const play = $("playBtn");
-    const pause = $("pauseBtn");
+    if ($("playBtn")) $("playBtn").disabled = state.isPlaying;
+    if ($("pauseBtn")) $("pauseBtn").disabled = !state.isPlaying;
+  }
 
-    if (play) play.disabled = state.isPlaying;
-    if (pause) pause.disabled = !state.isPlaying;
+  function updatePlaybackUIStopped() {
+    if ($("currentTime")) {
+      $("currentTime").textContent = formatTime(state.playStartOffset);
+    }
+
+    if ($("seekBar")) {
+      $("seekBar").value = "0";
+    }
   }
 
   function updatePlaybackUI() {
@@ -788,20 +788,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const currentTime = getCurrentPlaybackTime();
     const totalDuration = getTotalDuration();
 
-    const currentTimeElement = $("currentTime");
-    const durationElement = $("duration");
-    const seekBar = $("seekBar");
-
-    if (currentTimeElement) {
-      currentTimeElement.textContent = formatTime(currentTime);
+    if ($("currentTime")) {
+      $("currentTime").textContent = formatTime(currentTime);
     }
 
-    if (durationElement) {
-      durationElement.textContent = formatTime(totalDuration);
+    if ($("duration")) {
+      $("duration").textContent = formatTime(totalDuration);
     }
 
-    if (seekBar && totalDuration > 0) {
-      seekBar.value = String((currentTime / totalDuration) * 100);
+    if ($("seekBar") && totalDuration > 0) {
+      $("seekBar").value = String(
+        clamp((currentTime / totalDuration) * 100, 0, 100)
+      );
     }
 
     if (currentTime >= totalDuration) {
@@ -821,7 +819,11 @@ document.addEventListener("DOMContentLoaded", () => {
     return base * Math.pow(2, octave - 4);
   }
 
-  function makeKeyboardVoice(frequency, volume = 0.6, destination = null) {
+  function makeKeyboardVoice(
+    frequency,
+    volume = 0.5,
+    destination = null
+  ) {
     const ctx = getAudioContext();
 
     const oscillator = ctx.createOscillator();
@@ -835,7 +837,7 @@ document.addEventListener("DOMContentLoaded", () => {
     harmonic.type = "sine";
     harmonic.frequency.value = frequency * 2;
 
-    harmonicGain.gain.value = 0.12;
+    harmonicGain.gain.value = 0.1;
     voiceGain.gain.value = 0;
 
     oscillator.connect(voiceGain);
@@ -859,15 +861,20 @@ document.addEventListener("DOMContentLoaded", () => {
       oscillator,
       harmonic,
       gain: voiceGain,
+
       stop(release = 0.12) {
-        const t = ctx.currentTime;
+        const time = ctx.currentTime;
 
         try {
-          voiceGain.gain.cancelScheduledValues(t);
-          voiceGain.gain.setTargetAtTime(0.0001, t, Math.max(0.01, release / 4));
+          voiceGain.gain.cancelScheduledValues(time);
+          voiceGain.gain.setTargetAtTime(
+            0.0001,
+            time,
+            Math.max(0.01, release / 4)
+          );
 
-          oscillator.stop(t + release);
-          harmonic.stop(t + release);
+          oscillator.stop(time + release);
+          harmonic.stop(time + release);
         } catch (_) {}
       }
     };
@@ -880,7 +887,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.activeKeyboardNotes.has(keyId)) return;
 
     const frequency = noteFrequency(note, octave);
-    const volume = clamp(numberValue("keyboardVolume", DEFAULTS.keyboardVolume), 0, 1);
+
+    const volume = clamp(
+      numberValue("keyboardVolume", DEFAULTS.keyboardVolume),
+      0,
+      1
+    );
 
     const voice = makeKeyboardVoice(
       frequency,
@@ -902,7 +914,10 @@ document.addEventListener("DOMContentLoaded", () => {
       activeNote.recordEvent = {
         note: keyId,
         frequency,
-        time: Math.max(0, ctx.currentTime - state.keyboardRecordStart),
+        time: Math.max(
+          0,
+          ctx.currentTime - state.keyboardRecordStart
+        ),
         duration: 0,
         volume
       };
@@ -922,7 +937,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!active) return;
 
     const ctx = getAudioContext();
-    const duration = Math.max(0.06, ctx.currentTime - active.startedAt);
+
+    const duration = Math.max(
+      0.06,
+      ctx.currentTime - active.startedAt
+    );
 
     if (active.recordEvent) {
       active.recordEvent.duration = duration;
@@ -951,24 +970,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const container = $("pianoKeyboard");
     if (!container) return;
 
-    if (container.children.length > 0) {
+    if (container.children.length) {
       attachExistingKeyboardKeys(container);
       return;
     }
 
     container.innerHTML = "";
 
-    const octaves = [3, 4, 5];
-
-    octaves.forEach((octave) => {
+    [3, 4, 5].forEach((octave) => {
       const octaveRow = document.createElement("div");
       octaveRow.className = "piano-octave";
 
       NOTE_NAMES.forEach((note) => {
         const key = document.createElement("button");
+
         key.type = "button";
         key.className =
-          "piano-key " + (note.includes("#") ? "black-key" : "white-key");
+          "piano-key " +
+          (note.includes("#") ? "black-key" : "white-key");
 
         key.dataset.note = note;
         key.dataset.octave = String(octave);
@@ -1007,14 +1026,14 @@ document.addEventListener("DOMContentLoaded", () => {
         key.getAttribute("data-key") ||
         key.textContent.trim();
 
-      const match = rawNote.match(/^(C#|D#|F#|G#|A#|C|D|E|F|G|A|B)(-?\d+)?$/i);
+      const match = rawNote.match(
+        /^(C#|D#|F#|G#|A#|C|D|E|F|G|A|B)(-?\d+)?$/i
+      );
 
       if (!match) return;
 
       const note = match[1].toUpperCase();
-      const octave = Number(
-        key.dataset.octave || match[2] || 4
-      );
+      const octave = Number(key.dataset.octave || match[2] || 4);
 
       key.dataset.naolBound = "true";
 
@@ -1034,13 +1053,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* =========================================================
-     KEYBOARD PERFORMANCE PLAYBACK
+     KEYBOARD PLAYBACK
      ========================================================= */
 
   function stopKeyboardPlayback() {
     state.keyboardPlaybackNodes.forEach((node) => {
       try {
-        node.stop();
+        if (typeof node.stop === "function") node.stop();
       } catch (_) {}
 
       safeDisconnect(node);
@@ -1049,51 +1068,82 @@ document.addEventListener("DOMContentLoaded", () => {
     state.keyboardPlaybackNodes = [];
   }
 
-  function scheduleKeyboardPerformance(offset = 0, destination = null, scale = 1) {
+  function scheduleKeyboardPerformance(
+    offset = 0,
+    destination = null,
+    scale = 1
+  ) {
     const ctx = getAudioContext();
     const target = destination || state.eq.bass;
 
     state.keyboardEvents.forEach((event) => {
       const start = Number(event.time) || 0;
-      const duration = Math.max(0.06, Number(event.duration) || 0.2);
-      const end = start + duration;
+      const duration = Math.max(
+        0.06,
+        Number(event.duration) || 0.2
+      );
 
+      const end = start + duration;
       if (end <= offset) return;
 
       const eventStart = Math.max(0, start - offset);
-      const eventDuration = Math.max(0.04, end - Math.max(start, offset));
+      const eventDuration = Math.max(
+        0.04,
+        end - Math.max(start, offset)
+      );
 
       const oscillator = ctx.createOscillator();
+      const harmonic = ctx.createOscillator();
+      const harmonicGain = ctx.createGain();
       const gain = ctx.createGain();
 
       oscillator.type = "triangle";
       oscillator.frequency.value = Number(event.frequency) || 440;
 
+      harmonic.type = "sine";
+      harmonic.frequency.value = (Number(event.frequency) || 440) * 2;
+      harmonicGain.gain.value = 0.1;
+
       const volume = clamp(
-        (Number(event.volume) || 0.5) * state.keyboardMixGain * scale,
+        (Number(event.volume) || 0.4) *
+          state.keyboardMixGain *
+          scale,
         0,
         1
       );
 
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime + eventStart);
+      const startAt = ctx.currentTime + eventStart;
+      const stopAt = startAt + eventDuration;
+
+      gain.gain.setValueAtTime(0.0001, startAt);
       gain.gain.exponentialRampToValueAtTime(
         Math.max(0.0002, volume),
-        ctx.currentTime + eventStart + 0.025
+        startAt + Math.min(0.025, eventDuration / 3)
       );
 
       gain.gain.setTargetAtTime(
         0.0001,
-        ctx.currentTime + eventStart + Math.max(0.03, eventDuration - 0.03),
+        Math.max(startAt + 0.03, stopAt - 0.03),
         0.02
       );
 
       oscillator.connect(gain);
+      harmonic.connect(harmonicGain);
+      harmonicGain.connect(gain);
       gain.connect(target);
 
-      oscillator.start(ctx.currentTime + eventStart);
-      oscillator.stop(ctx.currentTime + eventStart + eventDuration + 0.12);
+      oscillator.start(startAt);
+      harmonic.start(startAt);
 
-      state.keyboardPlaybackNodes.push(oscillator, gain);
+      oscillator.stop(stopAt + 0.1);
+      harmonic.stop(stopAt + 0.1);
+
+      state.keyboardPlaybackNodes.push(
+        oscillator,
+        harmonic,
+        gain,
+        harmonicGain
+      );
     });
   }
 
@@ -1111,7 +1161,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const button = $("recordKeyboardBtn");
     if (button) button.textContent = "Stop Keyboard Recording";
 
-    notify("Keyboard recording jalqabame. Amma piano taphadhu.", "success");
+    notify(
+      "Keyboard recording jalqabame. Piano taphadhu.",
+      "success"
+    );
+
     updateTrackDisplay();
   }
 
@@ -1123,14 +1177,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (button) button.textContent = "Record Keyboard";
 
     state.keyboardEvents = state.keyboardEvents.filter((event) => {
-      event.duration = Math.max(0.06, Number(event.duration) || 0.2);
+      event.duration = Math.max(
+        0.06,
+        Number(event.duration) || 0.2
+      );
+
       return Number.isFinite(event.frequency) && event.frequency > 0;
     });
 
     updateTrackDisplay();
 
     notify(
-      `Keyboard performance ${state.keyboardEvents.length} note qabatee jira.`,
+      `Keyboard notes ${state.keyboardEvents.length} waraabaman.`,
       "success"
     );
   }
@@ -1153,10 +1211,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let peak = 0;
     let count = 0;
 
-    const stride = Math.max(
-      1,
-      Math.floor(buffer.length / 250000)
-    );
+    const stride = Math.max(1, Math.floor(buffer.length / 250000));
 
     for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
       const data = buffer.getChannelData(channel);
@@ -1192,165 +1247,398 @@ document.addEventListener("DOMContentLoaded", () => {
       };
     }
 
-    let estimatedEnergy = 0;
-    let estimatedPeak = 0;
-    let totalDuration = 0;
+    let energy = 0;
+    let peak = 0;
+    let duration = 0;
 
     state.keyboardEvents.forEach((event) => {
-      const volume = clamp(Number(event.volume) || 0.5, 0, 1);
-      const duration = Math.max(0.06, Number(event.duration) || 0.2);
+      const volume = clamp(Number(event.volume) || 0.4, 0, 1);
+      const noteDuration = Math.max(
+        0.06,
+        Number(event.duration) || 0.2
+      );
 
-      estimatedEnergy += volume * volume * duration;
-      estimatedPeak = Math.max(estimatedPeak, volume);
-      totalDuration = Math.max(
-        totalDuration,
-        (Number(event.time) || 0) + duration
+      energy += volume * volume * noteDuration;
+      peak = Math.max(peak, volume);
+
+      duration = Math.max(
+        duration,
+        (Number(event.time) || 0) + noteDuration
       );
     });
 
-    const rms = totalDuration > 0
-      ? Math.sqrt(estimatedEnergy / totalDuration) * 0.35
+    const rms = duration > 0
+      ? Math.sqrt(energy / duration) * 0.35
       : 0;
 
     return {
       rms,
-      peak: estimatedPeak * 0.35,
+      peak: peak * 0.35,
       average: rms,
-      duration: totalDuration,
+      duration,
       noteCount: state.keyboardEvents.length
     };
   }
 
   /* =========================================================
-     AUTO ADJUST ALL
-     Includes audio tracks AND recorded keyboard performance
+     AUTO PRODUCE
+     Creates a basic chord accompaniment for uploaded audio.
+     Uses browser synthesis; no external API required.
      ========================================================= */
 
-  function autoAdjustAll() {
+  function estimateTempo(buffer) {
+    if (!buffer || !buffer.length) return 90;
+
+    const data = buffer.getChannelData(0);
+    const sampleRate = buffer.sampleRate;
+
+    const windowSize = Math.floor(sampleRate * 0.05);
+    const hop = Math.floor(sampleRate * 0.025);
+
+    if (windowSize < 1 || hop < 1) return 90;
+
+    const envelope = [];
+
+    for (let start = 0; start + windowSize < data.length; start += hop) {
+      let energy = 0;
+
+      for (let i = start; i < start + windowSize; i += 4) {
+        energy += data[i] * data[i];
+      }
+
+      envelope.push(Math.sqrt(energy / Math.max(1, windowSize / 4)));
+    }
+
+    const differences = [];
+
+    for (let i = 1; i < envelope.length; i++) {
+      differences.push(Math.max(0, envelope[i] - envelope[i - 1]));
+    }
+
+    const minBpm = 65;
+    const maxBpm = 150;
+
+    let bestBpm = 90;
+    let bestScore = -Infinity;
+
+    for (let bpm = minBpm; bpm <= maxBpm; bpm++) {
+      const lag = Math.round((60 / bpm) / 0.025);
+      if (lag < 1 || lag >= differences.length) continue;
+
+      let score = 0;
+      let count = 0;
+
+      for (let i = lag; i < differences.length; i++) {
+        score += differences[i] * differences[i - lag];
+        count++;
+      }
+
+      if (count) score /= count;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestBpm = bpm;
+      }
+    }
+
+    return clamp(bestBpm, minBpm, maxBpm);
+  }
+
+  function estimatePitchClass(buffer) {
+    if (!buffer || !buffer.length) return "C";
+
+    const sampleRate = buffer.sampleRate;
+    const data = buffer.getChannelData(0);
+
+    const segmentLength = Math.min(
+      8192,
+      data.length,
+      Math.floor(sampleRate * 0.25)
+    );
+
+    if (segmentLength < 1024) return "C";
+
+    const start = Math.max(
+      0,
+      Math.floor((data.length - segmentLength) * 0.35)
+    );
+
+    const segment = data.slice(start, start + segmentLength);
+
+    let mean = 0;
+    for (let i = 0; i < segment.length; i++) mean += segment[i];
+    mean /= segment.length;
+
+    for (let i = 0; i < segment.length; i++) {
+      segment[i] -= mean;
+    }
+
+    let bestLag = -1;
+    let bestCorrelation = 0;
+
+    const minLag = Math.floor(sampleRate / 800);
+    const maxLag = Math.min(
+      Math.floor(sampleRate / 70),
+      segment.length - 1
+    );
+
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let correlation = 0;
+      let normA = 0;
+      let normB = 0;
+
+      for (let i = 0; i < segment.length - lag; i += 2) {
+        const a = segment[i];
+        const b = segment[i + lag];
+
+        correlation += a * b;
+        normA += a * a;
+        normB += b * b;
+      }
+
+      const denominator = Math.sqrt(normA * normB);
+      const normalized = denominator > 0
+        ? correlation / denominator
+        : 0;
+
+      if (normalized > bestCorrelation) {
+        bestCorrelation = normalized;
+        bestLag = lag;
+      }
+    }
+
+    if (bestLag <= 0 || bestCorrelation < 0.2) return "C";
+
+    const frequency = sampleRate / bestLag;
+
+    if (frequency < 70 || frequency > 800) return "C";
+
+    const midi = Math.round(69 + 12 * Math.log2(frequency / 440));
+    const pitchClass = ((midi % 12) + 12) % 12;
+
+    return NOTE_NAMES[pitchClass];
+  }
+
+  function midiFrequency(midi) {
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  function noteToMidi(note, octave) {
+    const index = NOTE_NAMES.indexOf(note);
+
+    if (index < 0) return 60;
+
+    return (octave + 1) * 12 + index;
+  }
+
+  function getChordProgression(key, style = "pop") {
+    const majorProgressions = {
+      pop: [0, 7, 9, 5],
+      emotional: [0, 9, 5, 7],
+      simple: [0, 5, 7, 0],
+      worship: [0, 5, 9, 7]
+    };
+
+    const minorProgressions = {
+      pop: [9, 5, 0, 7],
+      emotional: [9, 7, 5, 0],
+      simple: [9, 0, 5, 7],
+      worship: [9, 5, 0, 7]
+    };
+
+    const keyIndex = NOTE_NAMES.indexOf(key);
+    const root = keyIndex >= 0 ? keyIndex : 0;
+
+    const likelyMinor = ["A", "D", "E", "B", "F#", "C#"].includes(key);
+    const offsets = likelyMinor
+      ? (minorProgressions[style] || minorProgressions.pop)
+      : (majorProgressions[style] || majorProgressions.pop);
+
+    return offsets.map((offset) => {
+      const chordRoot = (root + offset) % 12;
+
+      const minorChord = likelyMinor
+        ? [0, 3, 7]
+        : [0, 4, 7];
+
+      const chordIntervals = [0, 4, 7];
+
+      return {
+        root: chordRoot,
+        intervals: offset === 9 || offset === 2 || offset === 4
+          ? [0, 3, 7]
+          : chordIntervals
+      };
+    });
+  }
+
+  function addGeneratedNote(midi, time, duration, volume, name) {
+    state.keyboardEvents.push({
+      note: name || "Auto",
+      frequency: midiFrequency(midi),
+      time: Math.max(0, time),
+      duration: Math.max(0.06, duration),
+      volume: clamp(volume, 0.02, 0.8),
+      generated: true
+    });
+  }
+
+  function autoProduce() {
     getAudioContext();
 
-    const tracks = state.tracks.filter((track) => track.buffer);
-    const keyboardAnalysis = analyzeKeyboardPerformance();
+    const vocalTrack = state.tracks.find(
+      (track) => track.buffer && !track.muted
+    );
 
-    if (!tracks.length && !state.keyboardEvents.length) {
+    if (!vocalTrack) {
       notify(
-        "Auto Adjust gochuuf duraan audio upload godhi ykn keyboard waraabi.",
+        "Jalqaba sagalee namaa ykn audio file upload godhi.",
         "error"
       );
       return;
     }
 
-    const activeAnalyses = tracks.map((track) => ({
-      track,
-      analysis: analyzeAudioBuffer(track.buffer)
-    }));
+    const totalDuration = vocalTrack.buffer.duration;
 
-    const allRms = activeAnalyses
-      .map((item) => item.analysis.rms)
-      .filter((rms) => rms > 0);
-
-    if (keyboardAnalysis.rms > 0) {
-      allRms.push(keyboardAnalysis.rms);
+    if (totalDuration < 1) {
+      notify("Audio kanaaf dheerinni gahaan hin jiru.", "error");
+      return;
     }
 
-    const targetRms = 0.16;
-    const meanRms = allRms.length
-      ? Math.sqrt(
-          allRms.reduce((sum, rms) => sum + rms * rms, 0) /
-          allRms.length
-        )
-      : 0.1;
+    const settings = state.autoProduceSettings;
+    const bpm = clamp(Number(settings.bpm) || estimateTempo(vocalTrack.buffer), 65, 150);
+    const beatDuration = 60 / bpm;
+    const barDuration = beatDuration * 4;
 
-    activeAnalyses.forEach(({ track, analysis }) => {
-      if (analysis.rms <= 0.00001) {
-        track.autoGain = 1;
-        return;
-      }
+    const key = estimatePitchClass(vocalTrack.buffer);
+    const progression = getChordProgression(
+      key,
+      settings.progression || "pop"
+    );
 
-      const desired = targetRms / analysis.rms;
+    /*
+      Replace only previously generated notes.
+      Manually recorded keyboard notes remain intact.
+    */
+    state.keyboardEvents = state.keyboardEvents.filter(
+      (event) => !event.generated
+    );
 
-      track.autoGain = clamp(desired, 0.25, 2.5);
+    const barCount = Math.ceil(totalDuration / barDuration);
+    const baseOctave = 3;
 
-      if (track.gainNode) {
-        track.gainNode.gain.setTargetAtTime(
-          track.muted ? 0 : track.volume * track.autoGain,
-          state.audioContext.currentTime,
-          0.05
+    for (let bar = 0; bar < barCount; bar++) {
+      const chord = progression[bar % progression.length];
+      const barStart = bar * barDuration;
+      const chordRootMidi = 60 + chord.root;
+
+      const thirdInterval = chord.intervals[1] || 4;
+      const fifthInterval = chord.intervals[2] || 7;
+
+      const chordNotes = [
+        chordRootMidi,
+        chordRootMidi + thirdInterval,
+        chordRootMidi + fifthInterval
+      ];
+
+      /*
+        Gentle sustained chord layer.
+      */
+      chordNotes.forEach((midi, index) => {
+        addGeneratedNote(
+          midi - 12,
+          barStart,
+          Math.min(barDuration * 0.9, totalDuration - barStart),
+          index === 0 ? 0.15 : 0.105,
+          `Auto Chord ${bar + 1}`
+        );
+      });
+
+      /*
+        Simple broken-chord pattern.
+        Keeps the generated accompaniment rhythmic,
+        rather than playing a single sustained chord only.
+      */
+      const arpeggioPattern = [
+        chordNotes[0],
+        chordNotes[1],
+        chordNotes[2],
+        chordNotes[1],
+        chordNotes[0],
+        chordNotes[1],
+        chordNotes[2],
+        chordNotes[1]
+      ];
+
+      const stepDuration = beatDuration / 2;
+
+      for (let step = 0; step < 8; step++) {
+        const eventTime = barStart + step * stepDuration;
+
+        if (eventTime >= totalDuration) break;
+
+        const midi = arpeggioPattern[step] + 12;
+
+        addGeneratedNote(
+          midi,
+          eventTime,
+          Math.min(stepDuration * 0.85, totalDuration - eventTime),
+          0.12,
+          `Auto Arpeggio ${bar + 1}`
         );
       }
-    });
 
-    /*
-      Keyboard volume is adjusted separately.
-      This is important: keyboard is now a real part of
-      the mix and WAV export, not only a visual recording.
-    */
-    if (state.keyboardEvents.length && keyboardAnalysis.rms > 0.00001) {
-      const keyboardDesired = targetRms / keyboardAnalysis.rms;
-      state.keyboardMixGain = clamp(keyboardDesired, 0.3, 2.0);
-    } else {
-      state.keyboardMixGain = 1;
+      /*
+        Low bass root on the first and third beats.
+      */
+      [0, 2].forEach((beat) => {
+        const bassTime = barStart + beat * beatDuration;
+
+        if (bassTime >= totalDuration) return;
+
+        addGeneratedNote(
+          chordRootMidi - 24,
+          bassTime,
+          Math.min(beatDuration * 0.75, totalDuration - bassTime),
+          0.13,
+          `Auto Bass ${bar + 1}`
+        );
+      });
     }
 
-    /*
-      Small balanced EQ changes; these are not a substitute
-      for listening or professional mastering.
-    */
-    const overallRms = meanRms;
+    state.keyboardEvents.sort((a, b) => a.time - b.time);
+    state.keyboardMixGain = 0.75;
+    state.autoProduced = true;
 
-    let bassDb = 0;
-    let midDb = 0;
-    let trebleDb = 0;
+    updateTrackDisplay();
 
-    if (overallRms < 0.06) {
-      bassDb = 1;
-      midDb = 0.5;
-      trebleDb = 1;
-    } else if (overallRms > 0.25) {
-      bassDb = -0.5;
-      midDb = -0.5;
-      trebleDb = 0;
-    }
+    notify(
+      `AUTO PRODUCE xumurame. Key tilmaamaan: ${key}, tempo tilmaamaan: ${bpm} BPM. Dhaggeeffattee sirrii ta'uu mirkaneessi.`,
+      "success"
+    );
 
-    setValue("bassControl", bassDb);
-    setValue("midControl", midDb);
-    setValue("trebleControl", trebleDb);
-    setValue("compressorControl", 0.6);
-    setValue("limiterControl", 0.85);
-    setValue("reverbControl", state.keyboardEvents.length ? 0.1 : 0.08);
-    setValue("delayControl", 0.06);
-    setValue("chorusControl", state.keyboardEvents.length ? 0.08 : 0.04);
-    setValue("noiseGateControl", 0.01);
-    setValue("masterVolume", 0.8);
-
-    applyAllControls();
-    renderTrackList();
-
-    const message = state.keyboardEvents.length
-      ? `Auto Adjust tamam. Audio tracks ${tracks.length}, keyboard notes ${state.keyboardEvents.length} waliin mix godhame.`
-      : `Auto Adjust tamam. Audio tracks ${tracks.length} sirreeffaman. Keyboard waraabame hin jiru.`;
-
-    notify(message, "success");
-    setStatus("Auto Adjust complete");
+    setStatus("Auto Produce complete");
   }
 
-  function insertAutoAdjustButton() {
-    const mastering = $("masteringSection") || $("studioSection");
+  function insertAutoProduceButton() {
+    const parent = $("studioSection") ||
+      $("keyboardSection") ||
+      $("masteringSection");
 
-    if (!mastering || $("autoAdjustAllBtn")) return;
+    if (!parent || $("autoProduceBtn")) return;
 
     const button = document.createElement("button");
-    button.id = "autoAdjustAllBtn";
+
+    button.id = "autoProduceBtn";
     button.type = "button";
-    button.className = "auto-adjust-all-btn";
-    button.textContent = "✨ AUTO ADJUST ALL";
+    button.textContent = "🎹 AUTO PRODUCE";
 
     button.style.cssText = [
       "display:block",
       "width:100%",
-      "max-width:420px",
+      "max-width:440px",
       "margin:16px auto",
-      "padding:14px 20px",
+      "padding:15px 20px",
       "border:0",
       "border-radius:14px",
       "font-weight:800",
@@ -1361,9 +1649,119 @@ document.addEventListener("DOMContentLoaded", () => {
       "box-shadow:0 8px 25px rgba(6,182,212,.22)"
     ].join(";");
 
+    button.addEventListener("click", autoProduce);
+
+    parent.prepend(button);
+  }
+
+  /* =========================================================
+     AUTO MIX AND MASTER
+     ========================================================= */
+
+  function autoAdjustAll() {
+    getAudioContext();
+
+    const tracks = state.tracks.filter((track) => track.buffer);
+    const keyboardAnalysis = analyzeKeyboardPerformance();
+
+    if (!tracks.length && !state.keyboardEvents.length) {
+      notify("Jalqaba audio upload godhi ykn keyboard waraabi.", "error");
+      return;
+    }
+
+    const analyses = tracks.map((track) => ({
+      track,
+      analysis: analyzeAudioBuffer(track.buffer)
+    }));
+
+    const rmsValues = analyses
+      .map((item) => item.analysis.rms)
+      .filter((rms) => rms > 0);
+
+    if (keyboardAnalysis.rms > 0) {
+      rmsValues.push(keyboardAnalysis.rms);
+    }
+
+    const targetRms = 0.13;
+
+    analyses.forEach(({ track, analysis }) => {
+      if (analysis.rms <= 0.00001) {
+        track.autoGain = 1;
+        return;
+      }
+
+      track.autoGain = clamp(targetRms / analysis.rms, 0.2, 2.2);
+    });
+
+    if (state.keyboardEvents.length && keyboardAnalysis.rms > 0.00001) {
+      state.keyboardMixGain = clamp(
+        targetRms / keyboardAnalysis.rms,
+        0.3,
+        1.2
+      );
+    }
+
+    const meanRms = rmsValues.length
+      ? Math.sqrt(
+          rmsValues.reduce((sum, value) => sum + value * value, 0) /
+          rmsValues.length
+        )
+      : 0.1;
+
+    setValue("bassControl", meanRms < 0.06 ? 0.5 : 0);
+    setValue("midControl", 0.5);
+    setValue("trebleControl", meanRms < 0.06 ? 1 : 0.5);
+    setValue("compressorControl", 0.6);
+    setValue("limiterControl", 0.85);
+    setValue("reverbControl", state.keyboardEvents.length ? 0.1 : 0.06);
+    setValue("delayControl", 0.04);
+    setValue("chorusControl", 0.04);
+    setValue("noiseGateControl", 0.01);
+    setValue("masterVolume", 0.75);
+
+    applyAllControls();
+    updateAllTrackGains();
+    renderTrackList();
+
+    notify(
+      `AUTO MIX & MASTER xumurame. Audio tracks ${tracks.length}, keyboard notes ${state.keyboardEvents.length}.`,
+      "success"
+    );
+
+    setStatus("Auto Mix & Master complete");
+  }
+
+  function insertAutoAdjustButton() {
+    const parent = $("masteringSection") || $("studioSection");
+
+    if (!parent || $("autoAdjustAllBtn")) return;
+
+    const button = document.createElement("button");
+
+    button.id = "autoAdjustAllBtn";
+    button.type = "button";
+    button.className = "auto-adjust-all-btn";
+    button.textContent = "✨ AUTO MIX & MASTER";
+
+    button.style.cssText = [
+      "display:block",
+      "width:100%",
+      "max-width:440px",
+      "margin:16px auto",
+      "padding:15px 20px",
+      "border:0",
+      "border-radius:14px",
+      "font-weight:800",
+      "font-size:16px",
+      "cursor:pointer",
+      "color:#fff",
+      "background:linear-gradient(135deg,#059669,#0ea5e9)",
+      "box-shadow:0 8px 25px rgba(14,165,233,.22)"
+    ].join(";");
+
     button.addEventListener("click", autoAdjustAll);
 
-    mastering.prepend(button);
+    parent.prepend(button);
   }
 
   /* =========================================================
@@ -1376,82 +1774,86 @@ document.addEventListener("DOMContentLoaded", () => {
     const ctx = state.audioContext;
     const now = ctx.currentTime;
 
-    const bass = clamp(numberValue("bassControl", 0), -12, 12);
-    const mid = clamp(numberValue("midControl", 0), -12, 12);
-    const treble = clamp(numberValue("trebleControl", 0), -12, 12);
-
-    state.eq.bass.gain.setTargetAtTime(bass, now, 0.03);
-    state.eq.mid.gain.setTargetAtTime(mid, now, 0.03);
-    state.eq.treble.gain.setTargetAtTime(treble, now, 0.03);
-
-    const masterVolume = clamp(
-      numberValue("masterVolume", DEFAULTS.masterVolume),
-      0,
-      1
-    );
-
-    state.masterGain.gain.setTargetAtTime(
-      masterVolume,
+    state.eq.bass.gain.setTargetAtTime(
+      clamp(numberValue("bassControl", 0), -12, 12),
       now,
       0.03
     );
 
-    const compressorAmount = clamp(
-      numberValue("compressorControl", 0.55),
+    state.eq.mid.gain.setTargetAtTime(
+      clamp(numberValue("midControl", 0), -12, 12),
+      now,
+      0.03
+    );
+
+    state.eq.treble.gain.setTargetAtTime(
+      clamp(numberValue("trebleControl", 0), -12, 12),
+      now,
+      0.03
+    );
+
+    state.masterGain.gain.setTargetAtTime(
+      clamp(numberValue("masterVolume", DEFAULTS.masterVolume), 0, 1),
+      now,
+      0.03
+    );
+
+    const compression = clamp(
+      numberValue("compressorControl", DEFAULTS.compressor),
       0,
       1
     );
 
     state.effects.compressor.threshold.setTargetAtTime(
-      -8 - compressorAmount * 22,
+      -8 - compression * 22,
       now,
       0.03
     );
 
     state.effects.compressor.ratio.setTargetAtTime(
-      1 + compressorAmount * 7,
+      1 + compression * 7,
       now,
       0.03
     );
 
-    const limiterAmount = clamp(
-      numberValue("limiterControl", 0.85),
+    const limiter = clamp(
+      numberValue("limiterControl", DEFAULTS.limiter),
       0,
       1
     );
 
     state.effects.limiter.threshold.setTargetAtTime(
-      -1 - limiterAmount * 5,
+      -1 - limiter * 5,
       now,
       0.03
     );
 
     state.effects.limiter.ratio.setTargetAtTime(
-      8 + limiterAmount * 12,
+      8 + limiter * 12,
       now,
       0.03
     );
 
     state.effects.reverbSend.gain.setTargetAtTime(
-      clamp(numberValue("reverbControl", 0.12), 0, 1) * 0.5,
+      clamp(numberValue("reverbControl", DEFAULTS.reverb), 0, 1) * 0.5,
       now,
       0.03
     );
 
     state.effects.delaySend.gain.setTargetAtTime(
-      clamp(numberValue("delayControl", 0.08), 0, 1) * 0.45,
+      clamp(numberValue("delayControl", DEFAULTS.delay), 0, 1) * 0.45,
       now,
       0.03
     );
 
     state.effects.chorusSend.gain.setTargetAtTime(
-      clamp(numberValue("chorusControl", 0.08), 0, 1) * 0.5,
+      clamp(numberValue("chorusControl", DEFAULTS.chorus), 0, 1) * 0.5,
       now,
       0.03
     );
 
     state.effects.delayFeedback.gain.setTargetAtTime(
-      clamp(numberValue("delayControl", 0.08), 0, 1) * 0.4,
+      clamp(numberValue("delayControl", DEFAULTS.delay), 0, 1) * 0.4,
       now,
       0.03
     );
@@ -1507,17 +1909,19 @@ document.addEventListener("DOMContentLoaded", () => {
       if (track.panner) track.panner.pan.value = 0;
     });
 
-    state.keyboardMixGain = 1;
+    state.keyboardMixGain = 0.7;
 
     if (state.audioContext) applyAllControls();
 
+    updateAllTrackGains();
     renderTrackList();
-    notify("Effects fi mixer settings reset godhaman.", "success");
+
+    notify("Mixer fi effects reset godhaman.", "success");
   }
 
   function applyVocalPreset() {
-    const preset = $("vocalPreset");
-    const choice = preset ? preset.value : "balanced";
+    const selector = $("vocalPreset");
+    const choice = selector ? selector.value : "balanced";
 
     const presets = {
       balanced: {
@@ -1588,7 +1992,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* =========================================================
-     KEYBOARD + AUDIO MIX WAV EXPORT
+     WAV EXPORT
      ========================================================= */
 
   async function exportWav() {
@@ -1650,20 +2054,20 @@ document.addEventListener("DOMContentLoaded", () => {
       treble.gain.value = clamp(numberValue("trebleControl", 0), -12, 12);
 
       const compressor = offline.createDynamicsCompressor();
-      const compressionAmount = clamp(
-        numberValue("compressorControl", 0.55),
+      const compression = clamp(
+        numberValue("compressorControl", DEFAULTS.compressor),
         0,
         1
       );
 
-      compressor.threshold.value = -8 - compressionAmount * 22;
-      compressor.ratio.value = 1 + compressionAmount * 7;
+      compressor.threshold.value = -8 - compression * 22;
+      compressor.ratio.value = 1 + compression * 7;
       compressor.attack.value = 0.008;
       compressor.release.value = 0.18;
 
       const limiter = offline.createDynamicsCompressor();
       const limiterAmount = clamp(
-        numberValue("limiterControl", 0.85),
+        numberValue("limiterControl", DEFAULTS.limiter),
         0,
         1
       );
@@ -1680,10 +2084,6 @@ document.addEventListener("DOMContentLoaded", () => {
       limiter.connect(master);
       master.connect(offline.destination);
 
-      /*
-        Upload audio tracks are rendered with their own gain
-        and pan settings, in the same offline mix.
-      */
       const anySolo = state.tracks.some((track) => track.solo);
 
       state.tracks.forEach((track) => {
@@ -1717,13 +2117,12 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       /*
-        IMPORTANT FIX:
-        Recorded keyboard notes are rendered into the SAME
-        OfflineAudioContext as uploaded audio tracks.
-        So the exported WAV contains both sources.
+        Both manually recorded and generated keyboard notes
+        are rendered into the same offline audio mix.
       */
       state.keyboardEvents.forEach((event) => {
         const startTime = Math.max(0, Number(event.time) || 0);
+
         const noteDuration = Math.max(
           0.06,
           Number(event.duration) || 0.2
@@ -1735,7 +2134,6 @@ document.addEventListener("DOMContentLoaded", () => {
         const harmonic = offline.createOscillator();
         const harmonicGain = offline.createGain();
         const noteGain = offline.createGain();
-        const panner = offline.createStereoPanner();
 
         const frequency = Number(event.frequency) || 440;
 
@@ -1746,24 +2144,22 @@ document.addEventListener("DOMContentLoaded", () => {
         harmonic.frequency.value = frequency * 2;
         harmonicGain.gain.value = 0.1;
 
-        const baseVolume = clamp(
-          (Number(event.volume) || 0.5) * state.keyboardMixGain,
+        const volume = clamp(
+          (Number(event.volume) || 0.4) * state.keyboardMixGain,
           0,
-          1
+          0.8
         );
 
-        noteGain.gain.setValueAtTime(
-          0.0001,
-          startTime
-        );
+        const attack = Math.min(0.025, noteDuration / 3);
 
+        noteGain.gain.setValueAtTime(0.0001, startTime);
         noteGain.gain.exponentialRampToValueAtTime(
-          Math.max(0.0002, baseVolume),
-          startTime + Math.min(0.025, noteDuration / 3)
+          Math.max(0.0002, volume),
+          startTime + attack
         );
 
         const releaseStart = Math.max(
-          startTime + 0.03,
+          startTime + attack,
           startTime + noteDuration - 0.04
         );
 
@@ -1773,14 +2169,10 @@ document.addEventListener("DOMContentLoaded", () => {
           0.02
         );
 
-        panner.pan.value = 0;
-
         oscillator.connect(noteGain);
         harmonic.connect(harmonicGain);
         harmonicGain.connect(noteGain);
-
-        noteGain.connect(panner);
-        panner.connect(bass);
+        noteGain.connect(bass);
 
         oscillator.start(startTime);
         harmonic.start(startTime);
@@ -1802,12 +2194,13 @@ document.addEventListener("DOMContentLoaded", () => {
       setStatus("WAV export complete");
 
       notify(
-        `WAV mix xumurame. Audio tracks ${state.tracks.length}, keyboard notes ${state.keyboardEvents.length}.`,
+        `WAV xumurame. Audio tracks: ${state.tracks.length}; keyboard notes: ${state.keyboardEvents.length}.`,
         "success"
       );
     } catch (error) {
       console.error(error);
       setStatus("WAV export failed");
+
       notify(`WAV export hin milkoofne: ${error.message}`, "error");
     } finally {
       state.exportInProgress = false;
@@ -1892,7 +2285,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (!window.MediaRecorder || !ctx.createMediaStreamDestination) {
-      notify("Browser kun WebM export hin deeggaru. WAV export yaali.", "error");
+      notify("Browser kun WebM export hin deeggaru. WAV yaali.", "error");
       return;
     }
 
@@ -1906,25 +2299,26 @@ document.addEventListener("DOMContentLoaded", () => {
       streamDestination = ctx.createMediaStreamDestination();
       state.masterGain.connect(streamDestination);
 
-      const recorder = new MediaRecorder(streamDestination.stream, {
-        mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      const mimeType =
+        MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
-          : "audio/webm"
-      });
+          : "audio/webm";
+
+      const recorder = new MediaRecorder(
+        streamDestination.stream,
+        { mimeType }
+      );
 
       const chunks = [];
 
       recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunks.push(event.data);
-        }
+        if (event.data && event.data.size) chunks.push(event.data);
       };
 
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: recorder.mimeType });
 
         downloadBlob(blob, "Naol-Music-Studio-Mix.webm");
-
         safeDisconnect(streamDestination);
 
         state.exportInProgress = false;
@@ -1939,27 +2333,20 @@ document.addEventListener("DOMContentLoaded", () => {
       state.playStartOffset = 0;
       state.playStartTime = ctx.currentTime;
 
-      state.tracks.forEach((track) => {
-        playTrackFrom(track, 0);
-      });
+      state.tracks.forEach((track) => playTrackFrom(track, 0));
 
       scheduleKeyboardPerformance(0);
 
       setStatus("Recording mix to WebM...");
 
       setTimeout(() => {
-        if (recorder.state !== "inactive") {
-          recorder.stop();
-        }
-
+        if (recorder.state !== "inactive") recorder.stop();
         stopAllTracks();
-      }, Math.max(1000, getTotalDuration() * 1000 + 250));
+      }, Math.max(1000, getTotalDuration() * 1000 + 300));
     } catch (error) {
       console.error(error);
 
-      if (streamDestination) {
-        safeDisconnect(streamDestination);
-      }
+      if (streamDestination) safeDisconnect(streamDestination);
 
       state.exportInProgress = false;
       setStatus("WebM export failed");
@@ -1989,17 +2376,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
       state.recordedChunks = [];
 
-      const preferredMimeType =
+      const mimeType =
         MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
           : "audio/webm";
 
       state.mediaRecorder = new MediaRecorder(state.mediaStream, {
-        mimeType: preferredMimeType
+        mimeType
       });
 
       state.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
+        if (event.data && event.data.size) {
           state.recordedChunks.push(event.data);
         }
       };
@@ -2016,27 +2403,26 @@ document.addEventListener("DOMContentLoaded", () => {
           state.mediaStream = null;
         }
 
-        const status = $("recordStatus");
-        if (status) status.textContent = "Recording saved";
+        if ($("recordStatus")) {
+          $("recordStatus").textContent = "Recording saved";
+        }
 
         notify("Microphone recording save godhame.", "success");
       };
 
       state.mediaRecorder.start();
 
-      const status = $("recordStatus");
-      if (status) status.textContent = "Recording...";
+      if ($("recordStatus")) {
+        $("recordStatus").textContent = "Recording...";
+      }
 
-      const button = $("recordBtn");
-      if (button) button.disabled = true;
-
-      const stopButton = $("stopRecordBtn");
-      if (stopButton) stopButton.disabled = false;
+      if ($("recordBtn")) $("recordBtn").disabled = true;
+      if ($("stopRecordBtn")) $("stopRecordBtn").disabled = false;
 
       notify("Microphone recording jalqabame.", "success");
     } catch (error) {
       console.error(error);
-      notify("Microphone argachuuf hayyama kenni.", "error");
+      notify("Microphone hayyama argachuu hin dandeenye.", "error");
     }
   }
 
@@ -2048,11 +2434,8 @@ document.addEventListener("DOMContentLoaded", () => {
       state.mediaRecorder.stop();
     }
 
-    const button = $("recordBtn");
-    if (button) button.disabled = false;
-
-    const stopButton = $("stopRecordBtn");
-    if (stopButton) stopButton.disabled = true;
+    if ($("recordBtn")) $("recordBtn").disabled = false;
+    if ($("stopRecordBtn")) $("stopRecordBtn").disabled = true;
   }
 
   /* =========================================================
@@ -2060,10 +2443,9 @@ document.addEventListener("DOMContentLoaded", () => {
      ========================================================= */
 
   function startMasterMeter() {
-    const analyser = state.masterAnalyser;
-    if (!analyser) return;
+    if (!state.masterAnalyser) return;
 
-    const data = new Uint8Array(analyser.fftSize);
+    const data = new Uint8Array(state.masterAnalyser.fftSize);
 
     function drawMeter() {
       if (!state.masterAnalyser) return;
@@ -2079,13 +2461,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const rms = Math.sqrt(sum / data.length);
       const level = clamp(rms * 320, 0, 100);
-
       const meter = $("masterMeter");
 
       if (meter) {
-        if (meter.tagName.toLowerCase() === "meter") {
-          meter.value = level;
-        } else if (meter.tagName.toLowerCase() === "progress") {
+        if (
+          meter.tagName.toLowerCase() === "meter" ||
+          meter.tagName.toLowerCase() === "progress"
+        ) {
           meter.value = level;
         } else {
           meter.style.width = `${level}%`;
@@ -2100,7 +2482,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* =========================================================
-     PROJECT SETTINGS SAVE
+     SAVE PROJECT SETTINGS
      ========================================================= */
 
   function saveProjectSettings() {
@@ -2123,7 +2505,8 @@ document.addEventListener("DOMContentLoaded", () => {
         frequency: event.frequency,
         time: event.time,
         duration: event.duration,
-        volume: event.volume
+        volume: event.volume,
+        generated: Boolean(event.generated)
       })),
 
       keyboardMixGain: state.keyboardMixGain,
@@ -2153,7 +2536,7 @@ document.addEventListener("DOMContentLoaded", () => {
     downloadBlob(blob, "Naol-Music-Studio-Project.json");
 
     notify(
-      "Project settings fi keyboard performance save godhaman. Audio file mataa ofumaan JSON keessatti hin kuufamu.",
+      "Project settings fi keyboard notes save godhaman. Audio file ofumaan JSON keessa hin kuufamu.",
       "success"
     );
   }
@@ -2163,9 +2546,7 @@ document.addEventListener("DOMContentLoaded", () => {
      ========================================================= */
 
   function setupNavigation() {
-    const navItems = document.querySelectorAll(".nav-item[data-section]");
-
-    navItems.forEach((item) => {
+    document.querySelectorAll(".nav-item[data-section]").forEach((item) => {
       item.addEventListener("click", () => {
         const targetId = item.dataset.section;
 
@@ -2207,15 +2588,13 @@ document.addEventListener("DOMContentLoaded", () => {
     seekBar.addEventListener("input", () => {
       const total = getTotalDuration();
       const targetTime = (Number(seekBar.value) / 100) * total;
-
       const wasPlaying = state.isPlaying;
 
       stopAllTracks();
       state.playStartOffset = targetTime;
 
-      const currentTimeElement = $("currentTime");
-      if (currentTimeElement) {
-        currentTimeElement.textContent = formatTime(targetTime);
+      if ($("currentTime")) {
+        $("currentTime").textContent = formatTime(targetTime);
       }
 
       if (wasPlaying) playAllTracks();
@@ -2223,7 +2602,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* =========================================================
-     EVENT WIRING
+     BUTTONS
      ========================================================= */
 
   function setupUpload() {
@@ -2355,6 +2734,7 @@ document.addEventListener("DOMContentLoaded", () => {
     document.addEventListener("keydown", (event) => {
       if (
         event.repeat ||
+        !event.target ||
         event.target.matches("input, textarea, select")
       ) {
         return;
@@ -2383,7 +2763,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     window.addEventListener("blur", () => {
-      held.forEach((keyId) => {
+      [...held].forEach((keyId) => {
         const match = keyId.match(/^(.+)(\d+)$/);
 
         if (match) {
@@ -2408,6 +2788,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     buildVirtualKeyboard();
     setupComputerKeyboard();
+
+    insertAutoProduceButton();
     insertAutoAdjustButton();
 
     updateTrackDisplay();
@@ -2420,7 +2802,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setStatus("Ready");
 
     console.log(
-      "Naol Music Studio ready. Audio + keyboard performance mixing enabled."
+      "Naol Music Studio ready: Auto Produce, Auto Mix & Master, keyboard recording and WAV export enabled."
     );
   }
 
