@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <meta
+    name="description"
+    content="Naol Music Studio — online music recording, editing, mixing and audio effects."
+  >
+
+  <meta name="theme-color" content="#090b14">
+
+  <title>Naol Music Studio | Pro Audio</title>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <div class="app-shell">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+
+      <div class="brand">
+        <div class="brand-icon">♫</div>
+
+        <div>
+          <h1>NAOL</h1>
+          <span>MUSIC STUDIO</span>
+        </div>
+      </div>
+
+      <div class="sidebar-label">WORKSPACE</div>
+
+      <button class="nav-item active" data-section="studio">
+        <span>🎛️</span> Studio
+      </button>
+
+      <button class="nav-item" data-section="effects">
+        <span>✨</span> Effects
+      </button>
+
+      <button class="nav-item" data-section="vocal">
+        <span>🎙️</span> Vocal Studio
+      </button>
+
+      <button class="nav-item" data-section="keyboard">
+        <span>🎹</span> Keyboard
+      </button>
+
+      <button class="nav-item" data-section="mastering">
+        <span>🔊</span> Mastering
+      </button>
+
+      <div class="sidebar-bottom">
+        <div class="online-indicator"></div>
+        <span>Browser Audio Engine</span>
+      </div>
+
+    </aside>
+
+
+    <!-- MAIN APPLICATION -->
+    <main class="main-content">
+
+      <!-- TOP BAR -->
+      <header class="topbar">
+
+        <div>
+          <div class="eyebrow">YOUR CREATIVE WORKSPACE</div>
+          <h2>Music Production Studio</h2>
+          <p class="muted">
+            Record. Mix. Create. Master.
+          </p>
+        </div>
+
+        <div class="topbar-actions">
+          <button id="saveProjectBtn" class="btn secondary">
+            💾 Save Project
+          </button>
+
+          <button id="exportBtn" class="btn primary">
+            ⬇ Export Audio
+          </button>
+        </div>
+
+      </header>
+
+
+      <!-- IMPORT PANEL -->
+      <section class="panel import-panel">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">START CREATING</span>
+            <h3>Import Your Music</h3>
+          </div>
+
+          <span class="badge">FREE STUDIO</span>
+        </div>
+
+        <label for="audioUpload" class="upload-zone">
+
+          <div class="upload-icon">↑</div>
+
+          <h3>Upload audio files</h3>
+
+          <p>
+            Tap to select music, vocals, keyboard recordings or beats.
+          </p>
+
+          <span class="upload-formats">
+            MP3 · WAV · OGG · M4A*
+          </span>
+
+        </label>
+
+        <input
+          id="audioUpload"
+          type="file"
+          accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
+          multiple
+          hidden
+        >
+
+        <div class="record-row">
+
+          <button id="recordBtn" class="btn record-btn">
+            ● Record Voice
+          </button>
+
+          <button id="stopRecordBtn" class="btn secondary" disabled>
+            ■ Stop Recording
+          </button>
+
+          <span id="recordStatus" class="muted">
+            Microphone ready when permitted
+          </span>
+
+        </div>
+
+      </section>
+
+
+      <!-- TRANSPORT CONTROLS -->
+      <section class="panel transport-panel">
+
+        <div class="transport-buttons">
+
+          <button id="stopBtn" class="transport-btn" title="Stop">
+            ■
+          </button>
+
+          <button id="playBtn" class="transport-btn play-button" title="Play">
+            ▶
+          </button>
+
+          <button id="pauseBtn" class="transport-btn" title="Pause">
+            Ⅱ
+          </button>
+
+        </div>
+
+        <div class="transport-info">
+
+          <div>
+            <span class="eyebrow">CURRENT TRACK</span>
+            <strong id="currentTrackName">No audio selected</strong>
+          </div>
+
+          <div class="time-display">
+            <span id="currentTime">00:00</span>
+            <span class="muted">/</span>
+            <span id="duration">00:00</span>
+          </div>
+
+        </div>
+
+        <div class="progress-container">
+          <input
+            id="seekBar"
+            type="range"
+            min="0"
+            max="100"
+            value="0"
+            step="0.1"
+            aria-label="Audio position"
+          >
+        </div>
+
+      </section>
+
+
+      <!-- STUDIO SECTION -->
+      <section class="workspace-section" id="studioSection">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">MULTITRACK WORKSPACE</span>
+            <h3>Audio Tracks</h3>
+          </div>
+
+          <button id="addTrackBtn" class="btn secondary">
+            + Add Track
+          </button>
+        </div>
+
+        <div id="trackList" class="track-list">
+
+          <div class="empty-state" id="emptyTracks">
+
+            <div class="empty-icon">♫</div>
+
+            <h3>Your studio is ready</h3>
+
+            <p>
+              Upload an audio file to begin editing and mixing.
+            </p>
+
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- MIXER -->
+      <section class="panel mixer-panel">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">AUDIO CONTROL</span>
+            <h3>Mixing Console</h3>
+          </div>
+
+          <span class="badge">LIVE CONTROL</span>
+        </div>
+
+        <div class="mixer-grid">
+
+          <div class="mixer-channel">
+
+            <h4>MASTER</h4>
+
+            <div class="meter">
+              <div class="meter-fill" id="masterMeter"></div>
+            </div>
+
+            <label for="masterVolume">Master Volume</label>
+
+            <input
+              id="masterVolume"
+              type="range"
+              min="0"
+              max="1"
+              value="0.8"
+              step="0.01"
+            >
+
+            <span id="masterVolumeValue">80%</span>
+
+          </div>
+
+
+          <div class="mixer-channel">
+
+            <h4>STEREO</h4>
+
+            <label for="panControl">Left / Right</label>
+
+            <input
+              id="panControl"
+              type="range"
+              min="-1"
+              max="1"
+              value="0"
+              step="0.01"
+            >
+
+            <span id="panValue">Center</span>
+
+          </div>
+
+
+          <div class="mixer-channel">
+
+            <h4>LOW EQ</h4>
+
+            <label for="bassControl">Bass</label>
+
+            <input
+              id="bassControl"
+              type="range"
+              min="-12"
+              max="12"
+              value="0"
+              step="0.5"
+            >
+
+            <span id="bassValue">0 dB</span>
+
+          </div>
+
+
+          <div class="mixer-channel">
+
+            <h4>MID EQ</h4>
+
+            <label for="midControl">Mid</label>
+
+            <input
+              id="midControl"
+              type="range"
+              min="-12"
+              max="12"
+              value="0"
+              step="0.5"
+            >
+
+            <span id="midValue">0 dB</span>
+
+          </div>
+
+
+          <div class="mixer-channel">
+
+            <h4>HIGH EQ</h4>
+
+            <label for="trebleControl">Treble</label>
+
+            <input
+              id="trebleControl"
+              type="range"
+              min="-12"
+              max="12"
+              value="0"
+              step="0.5"
+            >
+
+            <span id="trebleValue">0 dB</span>
+
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- EFFECTS SECTION -->
+      <section class="panel effects-panel" id="effectsSection">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">SOUND DESIGN</span>
+            <h3>Audio Effects</h3>
+          </div>
+
+          <button id="resetEffectsBtn" class="btn secondary">
+            Reset Effects
+          </button>
+        </div>
+
+        <div class="effects-grid">
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>✨</span>
+              <h4>Reverb</h4>
+            </div>
+
+            <p>Add space and depth to your voice.</p>
+
+            <label for="reverbControl">Amount</label>
+
+            <input
+              id="reverbControl"
+              type="range"
+              min="0"
+              max="1"
+              value="0"
+              step="0.01"
+            >
+
+            <span id="reverbValue">0%</span>
+
+          </div>
+
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>🔁</span>
+              <h4>Delay</h4>
+            </div>
+
+            <p>Create echo and rhythmic repeats.</p>
+
+            <label for="delayControl">Amount</label>
+
+            <input
+              id="delayControl"
+              type="range"
+              min="0"
+              max="0.8"
+              value="0"
+              step="0.01"
+            >
+
+            <span id="delayValue">0%</span>
+
+          </div>
+
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>🎚️</span>
+              <h4>Compression</h4>
+            </div>
+
+            <p>Control loud and quiet parts.</p>
+
+            <label for="compressorControl">Strength</label>
+
+            <input
+              id="compressorControl"
+              type="range"
+              min="0"
+              max="1"
+              value="0.25"
+              step="0.01"
+            >
+
+            <span id="compressorValue">25%</span>
+
+          </div>
+
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>🎙️</span>
+              <h4>Noise Gate</h4>
+            </div>
+
+            <p>Reduce quiet background noise.</p>
+
+            <label for="noiseGateControl">Threshold</label>
+
+            <input
+              id="noiseGateControl"
+              type="range"
+              min="0"
+              max="0.1"
+              value="0"
+              step="0.001"
+            >
+
+            <span id="noiseGateValue">Off</span>
+
+          </div>
+
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>🌊</span>
+              <h4>Chorus</h4>
+            </div>
+
+            <p>Make a voice or instrument wider.</p>
+
+            <label for="chorusControl">Amount</label>
+
+            <input
+              id="chorusControl"
+              type="range"
+              min="0"
+              max="1"
+              value="0"
+              step="0.01"
+            >
+
+            <span id="chorusValue">0%</span>
+
+          </div>
+
+
+          <div class="effect-card">
+
+            <div class="effect-title">
+              <span>🔊</span>
+              <h4>Limiter</h4>
+            </div>
+
+            <p>Help prevent excessive output peaks.</p>
+
+            <label for="limiterControl">Strength</label>
+
+            <input
+              id="limiterControl"
+              type="range"
+              min="0"
+              max="1"
+              value="0.5"
+              step="0.01"
+            >
+
+            <span id="limiterValue">50%</span>
+
+          </div>
+
+        </div>
+
+        <div class="preset-row">
+
+          <label for="vocalPreset">Quick Vocal Preset</label>
+
+          <select id="vocalPreset">
+
+            <option value="none">Custom Settings</option>
+            <option value="clean">Clean Vocal</option>
+            <option value="warm">Warm Voice</option>
+            <option value="bright">Bright Vocal</option>
+            <option value="room">Room Reverb</option>
+            <option value="radio">Radio Style</option>
+
+          </select>
+
+          <button id="applyPresetBtn" class="btn primary">
+            Apply Preset
+          </button>
+
+        </div>
+
+      </section>
+
+
+      <!-- VOCAL STUDIO -->
+      <section class="panel vocal-panel" id="vocalSection">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">VOICE PROCESSING</span>
+            <h3>Vocal Studio</h3>
+          </div>
+        </div>
+
+        <div class="vocal-grid">
+
+          <div class="control-card">
+
+            <h4>Vocal Pitch</h4>
+
+            <p>Change playback pitch.</p>
+
+            <label for="pitchControl">Pitch shift</label>
+
+            <input
+              id="pitchControl"
+              type="range"
+              min="-12"
+              max="12"
+              value="0"
+              step="1"
+            >
+
+            <span id="pitchValue">0 semitones</span>
+
+          </div>
+
+
+          <div class="control-card">
+
+            <h4>Playback Speed</h4>
+
+            <p>Change playback rate.</p>
+
+            <label for="speedControl">Speed</label>
+
+            <input
+              id="speedControl"
+              type="range"
+              min="0.5"
+              max="1.5"
+              value="1"
+              step="0.05"
+            >
+
+            <span id="speedValue">1.00x</span>
+
+          </div>
+
+
+          <div class="control-card">
+
+            <h4>Fade In</h4>
+
+            <p>Gradually increase the volume.</p>
+
+            <label for="fadeInControl">Duration</label>
+
+            <input
+              id="fadeInControl"
+              type="range"
+              min="0"
+              max="10"
+              value="0"
+              step="0.5"
+            >
+
+            <span id="fadeInValue">0 sec</span>
+
+          </div>
+
+
+          <div class="control-card">
+
+            <h4>Fade Out</h4>
+
+            <p>Gradually decrease the volume.</p>
+
+            <label for="fadeOutControl">Duration</label>
+
+            <input
+              id="fadeOutControl"
+              type="range"
+              min="0"
+              max="10"
+              value="0"
+              step="0.5"
+            >
+
+            <span id="fadeOutValue">0 sec</span>
+
+          </div>
+
+        </div>
+
+        <p class="info-note">
+          Note: playback speed changes the pitch too. Independent,
+          high-quality pitch correction requires an additional audio engine.
+        </p>
+
+      </section>
+
+
+      <!-- KEYBOARD -->
+      <section class="panel keyboard-panel" id="keyboardSection">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">VIRTUAL INSTRUMENT</span>
+            <h3>Keyboard Studio</h3>
+          </div>
+        </div>
+
+        <p class="muted">
+          Tap a key to play a note. Use headphones for the best experience.
+        </p>
+
+        <div id="pianoKeyboard" class="piano-keyboard">
+
+          <button class="piano-key white-key" data-note="C4">C</button>
+          <button class="piano-key black-key" data-note="C#4">C#</button>
+          <button class="piano-key white-key" data-note="D4">D</button>
+          <button class="piano-key black-key" data-note="D#4">D#</button>
+          <button class="piano-key white-key" data-note="E4">E</button>
+          <button class="piano-key white-key" data-note="F4">F</button>
+          <button class="piano-key black-key" data-note="F#4">F#</button>
+          <button class="piano-key white-key" data-note="G4">G</button>
+          <button class="piano-key black-key" data-note="G#4">G#</button>
+          <button class="piano-key white-key" data-note="A4">A</button>
+          <button class="piano-key black-key" data-note="A#4">A#</button>
+          <button class="piano-key white-key" data-note="B4">B</button>
+          <button class="piano-key white-key" data-note="C5">C</button>
+
+        </div>
+
+        <div class="keyboard-controls">
+
+          <label for="keyboardVolume">Instrument Volume</label>
+
+          <input
+            id="keyboardVolume"
+            type="range"
+            min="0"
+            max="1"
+            value="0.3"
+            step="0.01"
+          >
+
+          <button id="recordKeyboardBtn" class="btn secondary">
+            ● Record Keyboard
+          </button>
+
+        </div>
+
+      </section>
+
+
+      <!-- MASTERING -->
+      <section class="panel mastering-panel" id="masteringSection">
+
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">FINAL OUTPUT</span>
+            <h3>Mastering & Export</h3>
+          </div>
+        </div>
+
+        <div class="mastering-grid">
+
+          <div class="control-card">
+
+            <h4>Output Format</h4>
+
+            <select id="exportFormat">
+
+              <option value="wav">WAV — High Quality</option>
+              <option value="webm">WebM — Compressed Audio</option>
+
+            </select>
+
+          </div>
+
+
+          <div class="control-card">
+
+            <h4>Export Quality</h4>
+
+            <p>WAV uses uncompressed PCM audio.</p>
+
+            <span class="badge">Browser Processing</span>
+
+          </div>
+
+        </div>
+
+        <button id="masterExportBtn" class="btn primary full-width">
+          ⬇ Render & Download Audio
+        </button>
+
+        <p class="info-note">
+          MP3 export will be enabled when an MP3 encoder is integrated.
+          Changing the filename extension alone does not convert audio.
+        </p>
+
+      </section>
+
+
+      <!-- STATUS -->
+      <footer class="app-footer">
+
+        <div>
+          <span class="online-indicator"></span>
+          <span id="appStatus">Studio ready</span>
+        </div>
+
+        <span>NAOL MUSIC STUDIO · ONLINE AUDIO WORKSPACE</span>
+
+      </footer>
+
+    </main>
+
+  </div>
+
+  <!-- APP NOTIFICATIONS -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="script.js" defer></script>
+
+</body>
+</html>
