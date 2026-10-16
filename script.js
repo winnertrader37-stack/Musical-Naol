@@ -2,22 +2,25 @@
 
 /* =========================================================
    NAOL MUSIC STUDIO
-   Complete browser-based audio editor and mixer.
+   Complete browser-based audio workstation.
+
    Features:
-   - Multiple audio tracks
-   - Waveforms
-   - Playback, pause, stop and seek
+   - Multiple audio file uploads
+   - Multitrack playback
+   - Play, pause, stop and seek
    - Track volume, pan, mute, solo and remove
-   - Master volume, pan and EQ
-   - Reverb, delay, chorus, compressor and limiter
-   - Automatic track-level balancing
-   - Virtual keyboard and keyboard performance recording
+   - Master volume and stereo pan
+   - Bass, mid and treble EQ
+   - Reverb, delay, compressor, limiter and chorus
+   - Basic noise gate
    - Microphone recording
-   - Keyboard performance playback
-   - WAV mix export
-   - Audio file export
-   - Pitch, speed and fade controls
-   - Project metadata export
+   - Virtual piano keyboard
+   - Keyboard performance recording
+   - Vocal presets
+   - Automatic mix balancing
+   - WAV export
+   - WebM recording export
+   - Project settings download
    ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -26,14 +29,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const AudioContextClass =
     window.AudioContext || window.webkitAudioContext;
 
-  /* =======================================================
+  /* =========================================================
      DOM ELEMENTS
-  ======================================================= */
+     ========================================================= */
 
   const appStatus = $("appStatus");
   const toast = $("toast");
 
   const uploadInput = $("audioUpload");
+  const addTrackBtn = $("addTrackBtn");
   const trackList = $("trackList");
 
   const playBtn = $("playBtn");
@@ -72,93 +76,57 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const exportFormat = $("exportFormat");
 
-  /* =======================================================
+  const saveProjectBtn = $("saveProjectBtn");
+  const exportBtn = $("exportBtn");
+  const masterExportBtn = $("masterExportBtn");
+
+  const resetEffectsBtn = $("resetEffectsBtn");
+  const vocalPreset = $("vocalPreset");
+  const applyPresetBtn = $("applyPresetBtn");
+
+  const keyboardVolume = $("keyboardVolume");
+  const pianoKeyboard = $("pianoKeyboard");
+  const recordKeyboardBtn = $("recordKeyboardBtn");
+
+  const masterMeter = $("masterMeter");
+
+  /* =========================================================
      APPLICATION STATE
-  ======================================================= */
+     ========================================================= */
 
   let audioContext = null;
-
-  let masterInput = null;
-  let masterGain = null;
-  let masterAnalyser = null;
-
-  let masterLow = null;
-  let masterMid = null;
-  let masterHigh = null;
-  let masterPan = null;
-
-  let masterCompressor = null;
-  let masterLimiter = null;
-
-  let masterDelay = null;
-  let masterDelayFeedback = null;
-  let masterDelayWet = null;
-
-  let masterReverb = null;
-  let masterReverbWet = null;
-
-  let masterChorus = null;
-  let chorusLFO = null;
-  let chorusDepth = null;
-  let chorusWet = null;
-
-  let recordingDestination = null;
-
-  let masterNoiseGate = null;
-  let gateAnalyser = null;
-  let gateTimer = null;
+  let audioGraph = null;
 
   let tracks = [];
   let nextTrackId = 1;
-  let selectedTrackId = null;
-
-  let microphoneStream = null;
-  let mediaRecorder = null;
-  let recordedChunks = [];
-
-  let microphoneSource = null;
-  let microphoneGain = null;
-
-  let keyboardDestination = null;
-  let keyboardVolume = 0.3;
-
-  const keyboardActiveNotes = new Map();
-  const keyboardTimers = new Map();
-
-  let keyboardRecording = false;
-  let keyboardRecordingStart = 0;
-  let keyboardEvents = [];
-  let keyboardPlaybackTimers = [];
 
   let isPlaying = false;
-  let transportStartTime = 0;
-  let transportPosition = 0;
-  let transportTimer = null;
+  let playbackStartTime = 0;
+  let playbackStartOffset = 0;
+  let pausedAt = 0;
+  let playbackTimer = null;
+
+  let microphoneStream = null;
+  let microphoneSource = null;
+  let microphoneTrackGain = null;
+  let microphoneRecorder = null;
+  let microphoneChunks = [];
+  let isRecordingMicrophone = false;
+
+  let keyboardRecording = false;
+  let keyboardEvents = [];
+  let keyboardRecordingStart = 0;
+  let keyboardActiveNotes = new Map();
+  let keyboardVoices = new Set();
 
   let toastTimer = null;
-  let renderInProgress = false;
+  let meterAnimationFrame = null;
 
-  const trackElements = new Map();
+  const MASTER_VOLUME_DEFAULT = 0.8;
 
-  /* =======================================================
-     HELPERS
-  ======================================================= */
-
-  function notify(message) {
-    if (!toast) {
-      console.log("[Naol Music Studio]", message);
-      return;
-    }
-
-    toast.textContent = message;
-    toast.classList.add("show");
-
-    clearTimeout(toastTimer);
-
-    toastTimer = setTimeout(() => {
-      toast.classList.remove("show");
-    }, 3000);
-  }
+  /* =========================================================
+     GENERAL HELPERS
+     ========================================================= */
 
   function setStatus(message) {
     if (appStatus) {
@@ -166,34 +134,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  function setText(id, value) {
-    const element = $(id);
-
-    if (element) {
-      element.textContent = value;
+  function showToast(message, duration = 3500) {
+    if (!toast) {
+      console.log(message);
+      return;
     }
-  }
 
-  function bind(id, eventName, callback) {
-    const element = $(id);
+    toast.textContent = message;
+    toast.classList.add("show");
 
-    if (element) {
-      element.addEventListener(eventName, callback);
+    if (toastTimer) {
+      clearTimeout(toastTimer);
     }
-  }
 
-  function clamp(value, min, max) {
-    return Math.min(max, Math.max(min, value));
-  }
-
-  function getNumber(id, fallback = 0) {
-    const element = $(id);
-
-    if (!element) return fallback;
-
-    const number = Number(element.value);
-
-    return Number.isFinite(number) ? number : fallback;
+    toastTimer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, duration);
   }
 
   function formatTime(seconds) {
@@ -202,254 +158,108 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const minutes = Math.floor(seconds / 60);
-    const remaining = Math.floor(seconds % 60);
+    const remainingSeconds = Math.floor(seconds % 60);
 
     return (
       String(minutes).padStart(2, "0") +
       ":" +
-      String(remaining).padStart(2, "0")
+      String(remainingSeconds).padStart(2, "0")
     );
   }
 
-  function safeDisconnect(node) {
-    if (!node) return;
+  function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(maximum, value));
+  }
 
-    try {
-      node.disconnect();
-    } catch (_) {
-      // The node may already be disconnected.
+  function readControl(element, fallback = 0) {
+    if (!element) {
+      return fallback;
     }
+
+    const value = Number(element.value);
+
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function safeFilename(name) {
+    return String(name || "naol-mix")
+      .replace(/\.[^.]+$/, "")
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+      .trim() || "naol-mix";
   }
 
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
+    const anchor = document.createElement("a");
 
-    link.href = url;
-    link.download = filename;
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = "none";
 
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
 
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
-  function audioSupported() {
-    if (!AudioContextClass) {
-      notify("Browser kee Web Audio API hin deeggaru.");
+  function getSupportedAudioFile(file) {
+    if (!file) {
       return false;
     }
 
-    return true;
+    const supportedExtensions =
+      /\.(mp3|wav|ogg|oga|m4a|aac|flac|webm|opus)$/i;
+
+    const supportedMime =
+      /^audio\//i.test(file.type || "");
+
+    return supportedMime || supportedExtensions.test(file.name || "");
   }
 
-  function getMasterDuration() {
-    let duration = 0;
+  function getTrackDuration() {
+    return tracks.reduce((maximum, track) => {
+      if (track.removed || !track.buffer) {
+        return maximum;
+      }
 
-    for (const track of tracks) {
-      duration = Math.max(
-        duration,
-        track.buffer.duration
+      const speed = Math.max(0.1, track.speed || 1);
+      const duration = track.buffer.duration / speed;
+
+      return Math.max(maximum, duration);
+    }, 0);
+  }
+
+  function getCurrentPosition() {
+    if (isPlaying && audioContext) {
+      return clamp(
+        playbackStartOffset +
+          (audioContext.currentTime - playbackStartTime),
+        0,
+        getTrackDuration()
       );
     }
 
-    if (keyboardEvents.length) {
-      const latest = keyboardEvents.reduce(
-        (maximum, event) =>
-          Math.max(maximum, event.end || event.start),
-        0
-      );
-
-      duration = Math.max(duration, latest);
-    }
-
-    return duration;
+    return clamp(pausedAt, 0, getTrackDuration());
   }
 
-  function getTransportPosition() {
-    if (!isPlaying || !audioContext) {
-      return transportPosition;
-    }
-
-    return Math.max(
-      0,
-      transportPosition +
-        (audioContext.currentTime - transportStartTime)
-    );
-  }
-
-  function panText(pan) {
-    if (Math.abs(pan) < 0.01) return "Center";
-
-    return pan < 0
-      ? "Left " + Math.round(-pan * 100) + "%"
-      : "Right " + Math.round(pan * 100) + "%";
-  }
-
-  function makeSafeFilename(value) {
-    return String(value || "naol-music")
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
-      .slice(0, 100);
-  }
-
-  /* =======================================================
-     AUDIO ENGINE
-  ======================================================= */
+  /* =========================================================
+     AUDIO CONTEXT
+     ========================================================= */
 
   async function ensureAudioContext() {
-    if (!audioSupported()) {
-      throw new Error("Web Audio API is unavailable.");
+    if (!AudioContextClass) {
+      throw new Error(
+        "This browser does not support the Web Audio API. Try an updated Chrome browser."
+      );
     }
 
     if (!audioContext) {
       audioContext = new AudioContextClass();
 
-      masterInput = audioContext.createGain();
+      createAudioGraph();
 
-      masterLow = audioContext.createBiquadFilter();
-      masterLow.type = "lowshelf";
-      masterLow.frequency.value = 150;
-
-      masterMid = audioContext.createBiquadFilter();
-      masterMid.type = "peaking";
-      masterMid.frequency.value = 1000;
-      masterMid.Q.value = 0.8;
-
-      masterHigh = audioContext.createBiquadFilter();
-      masterHigh.type = "highshelf";
-      masterHigh.frequency.value = 6500;
-
-      masterPan = audioContext.createStereoPanner();
-
-      masterCompressor =
-        audioContext.createDynamicsCompressor();
-
-      masterCompressor.threshold.value = -20;
-      masterCompressor.knee.value = 18;
-      masterCompressor.ratio.value = 4;
-      masterCompressor.attack.value = 0.006;
-      masterCompressor.release.value = 0.18;
-
-      masterLimiter =
-        audioContext.createDynamicsCompressor();
-
-      masterLimiter.threshold.value = -3;
-      masterLimiter.knee.value = 0;
-      masterLimiter.ratio.value = 20;
-      masterLimiter.attack.value = 0.001;
-      masterLimiter.release.value = 0.08;
-
-      masterGain = audioContext.createGain();
-      masterGain.gain.value = 0.8;
-
-      masterAnalyser = audioContext.createAnalyser();
-      masterAnalyser.fftSize = 1024;
-      masterAnalyser.smoothingTimeConstant = 0.8;
-
-      masterNoiseGate = audioContext.createGain();
-      masterNoiseGate.gain.value = 1;
-
-      gateAnalyser = audioContext.createAnalyser();
-      gateAnalyser.fftSize = 512;
-
-      masterDelay = audioContext.createDelay(2);
-      masterDelay.delayTime.value = 0.25;
-
-      masterDelayFeedback = audioContext.createGain();
-      masterDelayFeedback.gain.value = 0.15;
-
-      masterDelayWet = audioContext.createGain();
-      masterDelayWet.gain.value = 0;
-
-      masterReverb = audioContext.createConvolver();
-      masterReverb.buffer = createImpulseResponse(
-        audioContext,
-        2.2,
-        2
-      );
-
-      masterReverbWet = audioContext.createGain();
-      masterReverbWet.gain.value = 0;
-
-      masterChorus = audioContext.createDelay(0.1);
-      masterChorus.delayTime.value = 0.025;
-
-      chorusLFO = audioContext.createOscillator();
-      chorusLFO.type = "sine";
-      chorusLFO.frequency.value = 0.7;
-
-      chorusDepth = audioContext.createGain();
-      chorusDepth.gain.value = 0.003;
-
-      chorusWet = audioContext.createGain();
-      chorusWet.gain.value = 0;
-
-      chorusLFO.connect(chorusDepth);
-      chorusDepth.connect(masterChorus.delayTime);
-      chorusLFO.start();
-
-      recordingDestination =
-        audioContext.createMediaStreamDestination();
-
-      /*
-       * Main processing chain.
-       *
-       * Track and keyboard audio:
-       * source -> track gain/pan -> masterInput
-       * masterInput -> EQ -> pan -> compressor -> limiter
-       * -> master gain -> analyser -> speakers and recording.
-       */
-
-      masterInput.connect(masterLow);
-      masterLow.connect(masterMid);
-      masterMid.connect(masterHigh);
-      masterHigh.connect(masterPan);
-
-      masterPan.connect(masterCompressor);
-      masterCompressor.connect(masterLimiter);
-      masterLimiter.connect(masterGain);
-
-      masterGain.connect(masterNoiseGate);
-      masterNoiseGate.connect(masterAnalyser);
-
-      masterAnalyser.connect(audioContext.destination);
-      masterAnalyser.connect(recordingDestination);
-
-      /*
-       * Parallel effects.
-       * Each wet effect is captured in the master recording.
-       */
-
-      masterGain.connect(masterDelay);
-      masterDelay.connect(masterDelayWet);
-
-      masterDelayWet.connect(audioContext.destination);
-      masterDelayWet.connect(recordingDestination);
-
-      masterDelay.connect(masterDelayFeedback);
-      masterDelayFeedback.connect(masterDelay);
-
-      masterGain.connect(masterReverb);
-      masterReverb.connect(masterReverbWet);
-
-      masterReverbWet.connect(audioContext.destination);
-      masterReverbWet.connect(recordingDestination);
-
-      masterGain.connect(masterChorus);
-      masterChorus.connect(chorusWet);
-
-      chorusWet.connect(audioContext.destination);
-      chorusWet.connect(recordingDestination);
-
-      keyboardDestination = audioContext.createGain();
-      keyboardDestination.gain.value = 1;
-      keyboardDestination.connect(masterInput);
-
-      updateMasterControls();
-      updateEffectControls();
-
-      startNoiseGateMonitor();
+      startMeter();
     }
 
     if (audioContext.state === "suspended") {
@@ -459,564 +269,1244 @@ document.addEventListener("DOMContentLoaded", () => {
     return audioContext;
   }
 
-  function createImpulseResponse(context, seconds, decay) {
-    const length = Math.floor(
-      context.sampleRate * seconds
+  /* =========================================================
+     AUDIO GRAPH
+     ========================================================= */
+
+  function createAudioGraph() {
+    if (!audioContext) {
+      return;
+    }
+
+    const ctx = audioContext;
+
+    const masterInput = ctx.createGain();
+    const masterGain = ctx.createGain();
+
+    const bassFilter = ctx.createBiquadFilter();
+    const midFilter = ctx.createBiquadFilter();
+    const trebleFilter = ctx.createBiquadFilter();
+
+    const masterPanner = ctx.createStereoPanner();
+
+    const compressor = ctx.createDynamicsCompressor();
+    const limiter = ctx.createDynamicsCompressor();
+
+    const analyser = ctx.createAnalyser();
+
+    const recordingDestination = ctx.createMediaStreamDestination();
+
+    bassFilter.type = "lowshelf";
+    bassFilter.frequency.value = 180;
+
+    midFilter.type = "peaking";
+    midFilter.frequency.value = 1000;
+    midFilter.Q.value = 0.8;
+
+    trebleFilter.type = "highshelf";
+    trebleFilter.frequency.value = 5000;
+
+    compressor.threshold.value = -24;
+    compressor.knee.value = 24;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+
+    limiter.threshold.value = -3;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.08;
+
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+
+    masterGain.gain.value = MASTER_VOLUME_DEFAULT;
+
+    /*
+     * Main chain:
+     * Tracks -> Master Input -> EQ -> Compressor
+     * -> Limiter -> Master Gain -> Pan -> Output
+     */
+
+    masterInput.connect(bassFilter);
+    bassFilter.connect(midFilter);
+    midFilter.connect(trebleFilter);
+    trebleFilter.connect(compressor);
+    compressor.connect(limiter);
+    limiter.connect(masterGain);
+    masterGain.connect(masterPanner);
+
+    masterPanner.connect(analyser);
+    analyser.connect(ctx.destination);
+
+    /*
+     * Record the processed master mix.
+     */
+
+    masterPanner.connect(recordingDestination);
+
+    audioGraph = {
+      masterInput,
+      masterGain,
+      bassFilter,
+      midFilter,
+      trebleFilter,
+      masterPanner,
+      compressor,
+      limiter,
+      analyser,
+      recordingDestination
+    };
+
+    updateMasterControls();
+    updateEffects();
+  }
+
+  /* =========================================================
+     MASTER CONTROLS
+     ========================================================= */
+
+  function updateMasterControls() {
+    if (!audioGraph || !audioContext) {
+      return;
+    }
+
+    const ctx = audioContext;
+    const graph = audioGraph;
+
+    const volume = clamp(
+      readControl(masterVolume, MASTER_VOLUME_DEFAULT),
+      0,
+      1
     );
 
-    const impulse = context.createBuffer(
+    const pan = clamp(
+      readControl(panControl, 0),
+      -1,
+      1
+    );
+
+    graph.masterGain.gain.setTargetAtTime(
+      volume,
+      ctx.currentTime,
+      0.015
+    );
+
+    graph.masterPanner.pan.setTargetAtTime(
+      pan,
+      ctx.currentTime,
+      0.015
+    );
+
+    graph.bassFilter.gain.setTargetAtTime(
+      readControl(bassControl, 0),
+      ctx.currentTime,
+      0.015
+    );
+
+    graph.midFilter.gain.setTargetAtTime(
+      readControl(midControl, 0),
+      ctx.currentTime,
+      0.015
+    );
+
+    graph.trebleFilter.gain.setTargetAtTime(
+      readControl(trebleControl, 0),
+      ctx.currentTime,
+      0.015
+    );
+
+    updateControlLabels();
+  }
+
+  function updateControlLabels() {
+    const masterVolumeValue = $("masterVolumeValue");
+    const panValue = $("panValue");
+
+    if (masterVolumeValue) {
+      masterVolumeValue.textContent =
+        Math.round(readControl(masterVolume, 0.8) * 100) + "%";
+    }
+
+    if (panValue) {
+      const pan = readControl(panControl, 0);
+
+      if (Math.abs(pan) < 0.03) {
+        panValue.textContent = "Center";
+      } else if (pan < 0) {
+        panValue.textContent =
+          "Left " + Math.round(Math.abs(pan) * 100) + "%";
+      } else {
+        panValue.textContent =
+          "Right " + Math.round(pan * 100) + "%";
+      }
+    }
+
+    const values = [
+      ["bassValue", bassControl, " dB"],
+      ["midValue", midControl, " dB"],
+      ["trebleValue", trebleControl, " dB"]
+    ];
+
+    values.forEach(([id, control, suffix]) => {
+      const element = $(id);
+
+      if (element) {
+        const value = readControl(control, 0);
+
+        element.textContent =
+          (value > 0 ? "+" : "") + value + suffix;
+      }
+    });
+
+    const percentageControls = [
+      ["reverbValue", reverbControl],
+      ["delayValue", delayControl],
+      ["compressorValue", compressorControl],
+      ["chorusValue", chorusControl],
+      ["limiterValue", limiterControl]
+    ];
+
+    percentageControls.forEach(([id, control]) => {
+      const element = $(id);
+
+      if (element) {
+        element.textContent =
+          Math.round(readControl(control, 0) * 100) + "%";
+      }
+    });
+
+    const gateValue = $("noiseGateValue");
+
+    if (gateValue) {
+      const threshold = readControl(noiseGateControl, 0);
+
+      gateValue.textContent =
+        threshold <= 0 ? "Off" : threshold.toFixed(3);
+    }
+
+    const pitchValue = $("pitchValue");
+
+    if (pitchValue) {
+      pitchValue.textContent =
+        readControl(pitchControl, 0) + " semitones";
+    }
+
+    const speedValue = $("speedValue");
+
+    if (speedValue) {
+      speedValue.textContent =
+        readControl(speedControl, 1).toFixed(2) + "x";
+    }
+
+    const fadeInValue = $("fadeInValue");
+
+    if (fadeInValue) {
+      fadeInValue.textContent =
+        readControl(fadeInControl, 0) + " sec";
+    }
+
+    const fadeOutValue = $("fadeOutValue");
+
+    if (fadeOutValue) {
+      fadeOutValue.textContent =
+        readControl(fadeOutControl, 0) + " sec";
+    }
+  }
+
+  /* =========================================================
+     EFFECT PROCESSING
+     ========================================================= */
+
+  function makeImpulseResponse(ctx, duration = 2.0) {
+    const sampleRate = ctx.sampleRate;
+
+    const length = Math.max(
+      1,
+      Math.floor(sampleRate * duration)
+    );
+
+    const impulse = ctx.createBuffer(
       2,
       length,
-      context.sampleRate
+      sampleRate
     );
 
     for (let channel = 0; channel < 2; channel++) {
       const data = impulse.getChannelData(channel);
 
       for (let i = 0; i < length; i++) {
-        const progress = i / length;
+        const decay = Math.pow(1 - i / length, 2.5);
 
         data[i] =
-          (Math.random() * 2 - 1) *
-          Math.pow(1 - progress, decay);
+          (Math.random() * 2 - 1) * decay;
       }
     }
 
     return impulse;
   }
 
-  /* =======================================================
-     NOISE GATE
-  ======================================================= */
+  function createEffectNodes(ctx) {
+    const dry = ctx.createGain();
+    const wet = ctx.createGain();
 
-  function startNoiseGateMonitor() {
-    if (gateTimer) {
-      clearInterval(gateTimer);
-    }
+    const convolver = ctx.createConvolver();
+    const delay = ctx.createDelay(2.0);
+    const delayFeedback = ctx.createGain();
 
-    gateTimer = setInterval(() => {
-      if (
-        !audioContext ||
-        !gateAnalyser ||
-        !masterNoiseGate
-      ) {
-        return;
-      }
+    const chorusDelay = ctx.createDelay(0.1);
+    const chorusOscillator = ctx.createOscillator();
+    const chorusDepth = ctx.createGain();
+    const chorusWet = ctx.createGain();
 
-      const threshold = clamp(
-        getNumber("noiseGateControl", 0),
-        0,
-        1
-      );
+    const gate = ctx.createDynamicsCompressor();
 
-      /*
-       * Zero means gate disabled.
-       * Higher values require a louder signal to open.
-       */
+    convolver.buffer = makeImpulseResponse(ctx, 2.0);
 
-      if (threshold <= 0.001) {
-        masterNoiseGate.gain.setTargetAtTime(
-          1,
-          audioContext.currentTime,
-          0.03
-        );
+    delay.delayTime.value = 0.28;
+    delayFeedback.gain.value = 0.2;
 
-        return;
-      }
+    chorusDelay.delayTime.value = 0.025;
+    chorusOscillator.frequency.value = 0.35;
+    chorusDepth.gain.value = 0.003;
 
-      const data = new Uint8Array(
-        gateAnalyser.frequencyBinCount
-      );
+    gate.threshold.value = -70;
+    gate.knee.value = 0;
+    gate.ratio.value = 8;
+    gate.attack.value = 0.003;
+    gate.release.value = 0.08;
 
-      gateAnalyser.getByteTimeDomainData(data);
-
-      let sum = 0;
-
-      for (let i = 0; i < data.length; i++) {
-        const sample = (data[i] - 128) / 128;
-        sum += sample * sample;
-      }
-
-      const rms = Math.sqrt(sum / data.length);
-
-      const openThreshold = threshold * 0.08;
-      const target = rms > openThreshold ? 1 : 0.12;
-
-      masterNoiseGate.gain.setTargetAtTime(
-        target,
-        audioContext.currentTime,
-        0.035
-      );
-    }, 40);
+    dry.gain.value = 1;
+    wet.gain.value = 0;
+    chorusWet.gain.value = 0;
 
     /*
-     * Analyse the processed master signal to control
-     * the noise gate.
+     * Parallel reverb and delay.
      */
 
-    if (masterAnalyser && gateAnalyser) {
-      safeDisconnect(gateAnalyser);
+    dry.connect(gate);
 
-      try {
-        masterAnalyser.connect(gateAnalyser);
-      } catch (_) {
-        // Ignore duplicate connection errors.
-      }
-    }
-  }
+    gate.connect(ctx.destination);
 
-  /* =======================================================
-     MASTER CONTROLS
-  ======================================================= */
+    dry.connect(convolver);
+    convolver.connect(wet);
 
-  function updateMasterControls() {
-    const volume = clamp(
-      getNumber("masterVolume", 0.8),
-      0,
-      1
-    );
+    wet.connect(ctx.destination);
 
-    const pan = clamp(
-      getNumber("panControl", 0),
-      -1,
-      1
-    );
+    dry.connect(delay);
+    delay.connect(delayFeedback);
+    delayFeedback.connect(delay);
 
-    const bass = clamp(
-      getNumber("bassControl", 0),
-      -24,
-      24
-    );
+    delay.connect(wet);
 
-    const mid = clamp(
-      getNumber("midControl", 0),
-      -24,
-      24
-    );
+    /*
+     * Chorus modulation.
+     */
 
-    const treble = clamp(
-      getNumber("trebleControl", 0),
-      -24,
-      24
-    );
+    dry.connect(chorusDelay);
+    chorusDelay.connect(chorusWet);
+    chorusWet.connect(ctx.destination);
 
-    setText(
-      "masterVolumeValue",
-      Math.round(volume * 100) + "%"
-    );
+    chorusOscillator.connect(chorusDepth);
+    chorusDepth.connect(chorusDelay.delayTime);
 
-    setText("panValue", panText(pan));
-    setText("bassValue", bass.toFixed(1) + " dB");
-    setText("midValue", mid.toFixed(1) + " dB");
-    setText("trebleValue", treble.toFixed(1) + " dB");
-
-    if (!audioContext) return;
-
-    const now = audioContext.currentTime;
-
-    masterGain.gain.setTargetAtTime(
-      volume,
-      now,
-      0.025
-    );
-
-    masterPan.pan.setTargetAtTime(
-      pan,
-      now,
-      0.025
-    );
-
-    masterLow.gain.setTargetAtTime(
-      bass,
-      now,
-      0.025
-    );
-
-    masterMid.gain.setTargetAtTime(
-      mid,
-      now,
-      0.025
-    );
-
-    masterHigh.gain.setTargetAtTime(
-      treble,
-      now,
-      0.025
-    );
-  }
-
-  /* =======================================================
-     EFFECT CONTROLS
-  ======================================================= */
-
-  function updateEffectControls() {
-    const reverb = clamp(
-      getNumber("reverbControl", 0),
-      0,
-      1
-    );
-
-    const delay = clamp(
-      getNumber("delayControl", 0),
-      0,
-      1
-    );
-
-    const compression = clamp(
-      getNumber("compressorControl", 0.25),
-      0,
-      1
-    );
-
-    const chorus = clamp(
-      getNumber("chorusControl", 0),
-      0,
-      1
-    );
-
-    const limiter = clamp(
-      getNumber("limiterControl", 0.5),
-      0,
-      1
-    );
-
-    setText("reverbValue", Math.round(reverb * 100) + "%");
-    setText("delayValue", Math.round(delay * 100) + "%");
-
-    setText(
-      "compressorValue",
-      Math.round(compression * 100) + "%"
-    );
-
-    setText("chorusValue", Math.round(chorus * 100) + "%");
-    setText("limiterValue", Math.round(limiter * 100) + "%");
-
-    if (!audioContext) return;
-
-    const now = audioContext.currentTime;
-
-    masterReverbWet.gain.setTargetAtTime(
-      reverb * 0.4,
-      now,
-      0.04
-    );
-
-    masterDelayWet.gain.setTargetAtTime(
-      delay * 0.3,
-      now,
-      0.04
-    );
-
-    masterDelayFeedback.gain.setTargetAtTime(
-      clamp(delay * 0.4, 0, 0.55),
-      now,
-      0.04
-    );
-
-    masterCompressor.threshold.setTargetAtTime(
-      -8 - compression * 22,
-      now,
-      0.04
-    );
-
-    masterCompressor.ratio.setTargetAtTime(
-      1 + compression * 8,
-      now,
-      0.04
-    );
-
-    masterLimiter.threshold.setTargetAtTime(
-      -1 - limiter * 7,
-      now,
-      0.04
-    );
-
-    masterLimiter.ratio.setTargetAtTime(
-      4 + limiter * 16,
-      now,
-      0.04
-    );
-
-    chorusWet.gain.setTargetAtTime(
-      chorus * 0.25,
-      now,
-      0.04
-    );
-  }
-
-  /* =======================================================
-     TRACK ANALYSIS AND AUTO MIX
-  ======================================================= */
-
-  function analyseBuffer(buffer) {
-    let sum = 0;
-    let samples = 0;
-    let peak = 0;
-
-    const step = Math.max(
-      1,
-      Math.floor(buffer.length / 60000)
-    );
-
-    for (
-      let channel = 0;
-      channel < buffer.numberOfChannels;
-      channel++
-    ) {
-      const data = buffer.getChannelData(channel);
-
-      for (let i = 0; i < data.length; i += step) {
-        const value = data[i];
-
-        sum += value * value;
-        samples++;
-
-        peak = Math.max(peak, Math.abs(value));
-      }
-    }
+    chorusOscillator.start();
 
     return {
-      rms: samples ? Math.sqrt(sum / samples) : 0,
-      peak
+      dry,
+      wet,
+      convolver,
+      delay,
+      delayFeedback,
+      chorusDelay,
+      chorusOscillator,
+      chorusDepth,
+      chorusWet,
+      gate
     };
   }
 
-  async function autoMix() {
-    if (!tracks.length) {
-      notify("Auto Mix dura audio upload godhi.");
+  /*
+   * The main effects graph uses a dedicated parallel routing
+   * section. The track graph itself always remains connected
+   * directly to the master input.
+   */
+
+  let effectsGraph = null;
+
+  function setupEffectsGraph() {
+    if (!audioContext || !audioGraph || effectsGraph) {
       return;
     }
 
-    await ensureAudioContext();
+    const ctx = audioContext;
 
-    const activeTracks = tracks.filter(
-      (track) => !track.muted
-    );
+    const input = ctx.createGain();
+    const dry = ctx.createGain();
 
-    if (!activeTracks.length) {
-      notify("Track hundi mute dha. Track tokko unmute godhi.");
-      return;
-    }
+    const reverb = ctx.createConvolver();
+    const reverbGain = ctx.createGain();
 
-    const measurements = activeTracks.map((track) => {
-      const result = analyseBuffer(track.buffer);
+    const delay = ctx.createDelay(2.0);
+    const delayFeedback = ctx.createGain();
+    const delayGain = ctx.createGain();
 
-      track.rms = result.rms;
-      track.peak = result.peak;
+    const chorusDelay = ctx.createDelay(0.1);
+    const chorusGain = ctx.createGain();
+    const chorusOscillator = ctx.createOscillator();
+    const chorusDepth = ctx.createGain();
 
-      return result;
-    });
+    const noiseGate = ctx.createDynamicsCompressor();
+
+    reverb.buffer = makeImpulseResponse(ctx, 2.2);
+
+    delay.delayTime.value = 0.25;
+    delayFeedback.gain.value = 0.25;
+
+    chorusDelay.delayTime.value = 0.025;
+    chorusOscillator.frequency.value = 0.35;
+    chorusDepth.gain.value = 0.002;
+
+    noiseGate.threshold.value = -70;
+    noiseGate.knee.value = 0;
+    noiseGate.ratio.value = 8;
+    noiseGate.attack.value = 0.003;
+    noiseGate.release.value = 0.08;
+
+    dry.gain.value = 1;
 
     /*
-     * Target RMS is conservative.
-     * Avoid extreme amplification of nearly silent tracks.
+     * Effects are processed in parallel to preserve the dry
+     * signal and avoid feeding the master output back into itself.
      */
 
-    const targetRms = 0.16;
+    input.connect(dry);
+    dry.connect(noiseGate);
+    noiseGate.connect(audioGraph.masterInput);
 
-    activeTracks.forEach((track, index) => {
-      const rms = measurements[index].rms;
-      const peak = measurements[index].peak;
+    input.connect(reverb);
+    reverb.connect(reverbGain);
+    reverbGain.connect(audioGraph.masterInput);
 
-      if (rms <= 0.0001) {
-        track.volume = Math.min(track.volume, 0.25);
-        return;
+    input.connect(delay);
+    delay.connect(delayFeedback);
+    delayFeedback.connect(delay);
+    delay.connect(delayGain);
+    delayGain.connect(audioGraph.masterInput);
+
+    input.connect(chorusDelay);
+    chorusDelay.connect(chorusGain);
+    chorusGain.connect(audioGraph.masterInput);
+
+    chorusOscillator.connect(chorusDepth);
+    chorusDepth.connect(chorusDelay.delayTime);
+
+    chorusOscillator.start();
+
+    effectsGraph = {
+      input,
+      dry,
+      reverb,
+      reverbGain,
+      delay,
+      delayFeedback,
+      delayGain,
+      chorusDelay,
+      chorusGain,
+      chorusOscillator,
+      chorusDepth,
+      noiseGate
+    };
+
+    updateEffects();
+  }
+
+  function updateEffects() {
+    if (!audioContext) {
+      return;
+    }
+
+    /*
+     * Ensure the graph exists after the first audio interaction.
+     */
+
+    if (!effectsGraph && audioGraph) {
+      setupEffectsGraph();
+    }
+
+    if (!effectsGraph) {
+      updateControlLabels();
+      return;
+    }
+
+    const ctx = audioContext;
+    const fx = effectsGraph;
+
+    const reverbAmount = clamp(
+      readControl(reverbControl, 0),
+      0,
+      1
+    );
+
+    const delayAmount = clamp(
+      readControl(delayControl, 0),
+      0,
+      0.8
+    );
+
+    const compressionAmount = clamp(
+      readControl(compressorControl, 0.25),
+      0,
+      1
+    );
+
+    const chorusAmount = clamp(
+      readControl(chorusControl, 0),
+      0,
+      1
+    );
+
+    const limiterAmount = clamp(
+      readControl(limiterControl, 0.5),
+      0,
+      1
+    );
+
+    const gateThreshold = clamp(
+      readControl(noiseGateControl, 0),
+      0,
+      0.1
+    );
+
+    fx.dry.gain.setTargetAtTime(
+      1 - reverbAmount * 0.15,
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.reverbGain.gain.setTargetAtTime(
+      reverbAmount * 0.45,
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.delayGain.gain.setTargetAtTime(
+      delayAmount * 0.45,
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.delayFeedback.gain.setTargetAtTime(
+      clamp(delayAmount * 0.45, 0, 0.38),
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.chorusGain.gain.setTargetAtTime(
+      chorusAmount * 0.45,
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.chorusDepth.gain.setTargetAtTime(
+      chorusAmount * 0.004,
+      ctx.currentTime,
+      0.02
+    );
+
+    fx.noiseGate.threshold.value =
+      gateThreshold > 0
+        ? 20 * Math.log10(gateThreshold)
+        : -70;
+
+    /*
+     * Update the master compressor and limiter.
+     */
+
+    if (audioGraph.compressor) {
+      audioGraph.compressor.threshold.value =
+        -12 - compressionAmount * 18;
+
+      audioGraph.compressor.ratio.value =
+        1 + compressionAmount * 7;
+    }
+
+    if (audioGraph.limiter) {
+      audioGraph.limiter.threshold.value =
+        -1 - limiterAmount * 8;
+
+      audioGraph.limiter.ratio.value =
+        4 + limiterAmount * 16;
+    }
+
+    updateControlLabels();
+  }
+
+  /* =========================================================
+     AUDIO UPLOAD
+     ========================================================= */
+
+  async function handleUpload(event) {
+    const files = Array.from(
+      event.target.files || []
+    );
+
+    /*
+     * Reset the input so selecting the same file again works.
+     */
+
+    event.target.value = "";
+
+    if (!files.length) {
+      return;
+    }
+
+    const acceptedFiles = files.filter(
+      getSupportedAudioFile
+    );
+
+    const rejectedCount =
+      files.length - acceptedFiles.length;
+
+    if (!acceptedFiles.length) {
+      showToast(
+        "No supported audio files found. Select MP3, WAV, OGG or another browser-supported audio file."
+      );
+
+      return;
+    }
+
+    try {
+      await ensureAudioContext();
+      setupEffectsGraph();
+
+      setStatus("Loading audio files...");
+
+      let successful = 0;
+
+      for (const file of acceptedFiles) {
+        try {
+          if (file.size === 0) {
+            throw new Error("The file is empty.");
+          }
+
+          const arrayBuffer = await file.arrayBuffer();
+
+          const decodedBuffer =
+            await audioContext.decodeAudioData(
+              arrayBuffer.slice(0)
+            );
+
+          if (!decodedBuffer || decodedBuffer.length === 0) {
+            throw new Error("The audio file contains no playable audio.");
+          }
+
+          const track = {
+            id: nextTrackId++,
+            name: file.name,
+            originalFileName: file.name,
+            size: file.size,
+            buffer: decodedBuffer,
+            volume: 1,
+            pan: 0,
+            muted: false,
+            solo: false,
+            removed: false,
+            speed: clamp(
+              readControl(speedControl, 1),
+              0.5,
+              1.5
+            ),
+            pitch: readControl(pitchControl, 0),
+            fadeIn: readControl(fadeInControl, 0),
+            fadeOut: readControl(fadeOutControl, 0),
+            source: null,
+            gainNode: null,
+            pannerNode: null,
+            startedAt: 0,
+            startOffset: 0
+          };
+
+          tracks.push(track);
+
+          renderTracks();
+
+          successful++;
+
+        } catch (error) {
+          console.error(
+            "Audio upload failed:",
+            file.name,
+            error
+          );
+
+          showToast(
+            "Could not open " +
+              file.name +
+              ". Try converting it to MP3 or WAV.",
+            5000
+          );
+        }
       }
 
-      const correction = targetRms / rms;
+      if (successful > 0) {
+        setStatus(
+          successful +
+            " audio file(s) loaded successfully."
+        );
 
-      /*
-       * Limit gain correction to avoid large jumps.
-       * Peak protection is also considered.
-       */
+        showToast(
+          successful +
+            " audio file(s) added to your studio."
+        );
 
-      let gain = clamp(correction, 0.35, 2.5);
+        renderTracks();
+        updateTransportDisplay();
 
-      if (peak > 0) {
-        gain = Math.min(gain, 0.9 / peak);
+      } else {
+        setStatus("Audio upload failed.");
+
+        showToast(
+          "No files could be decoded. Try another audio format.",
+          5000
+        );
       }
 
-      track.volume = clamp(gain, 0.05, 1);
+      if (rejectedCount > 0) {
+        showToast(
+          rejectedCount +
+            " unsupported file(s) were skipped."
+        );
+      }
+
+    } catch (error) {
+      console.error("Upload error:", error);
+
+      setStatus("Could not load audio.");
+
+      showToast(
+        error.message ||
+          "Audio upload failed. Please try again.",
+        5000
+      );
+    }
+  }
+
+  if (uploadInput) {
+    uploadInput.addEventListener(
+      "change",
+      handleUpload
+    );
+  }
+
+  if (addTrackBtn && uploadInput) {
+    addTrackBtn.addEventListener("click", () => {
+      uploadInput.click();
     });
+  }
 
-    if (bassControl) bassControl.value = "0";
-    if (midControl) midControl.value = "0";
-    if (trebleControl) trebleControl.value = "1";
+  /* =========================================================
+     TRACK MANAGEMENT
+     ========================================================= */
 
-    if (compressorControl) {
-      compressorControl.value = "0.4";
+  function createTrackElement(track) {
+    const card = document.createElement("article");
+
+    card.className = "track-card";
+    card.dataset.trackId = String(track.id);
+
+    const header = document.createElement("div");
+    header.className = "track-header";
+
+    const title = document.createElement("strong");
+    title.className = "track-name";
+    title.textContent = track.name;
+
+    const duration = document.createElement("span");
+    duration.className = "track-duration";
+    duration.textContent = formatTime(
+      track.buffer.duration
+    );
+
+    header.append(title, duration);
+
+    const waveform = document.createElement("div");
+    waveform.className = "track-waveform";
+
+    const barCount = 48;
+
+    const channelData =
+      track.buffer.getChannelData(0);
+
+    const blockSize = Math.max(
+      1,
+      Math.floor(channelData.length / barCount)
+    );
+
+    for (let i = 0; i < barCount; i++) {
+      const bar = document.createElement("span");
+
+      bar.className = "waveform-bar";
+
+      const start = i * blockSize;
+      const end = Math.min(
+        channelData.length,
+        start + blockSize
+      );
+
+      let peak = 0;
+
+      for (let j = start; j < end; j += 4) {
+        peak = Math.max(
+          peak,
+          Math.abs(channelData[j] || 0)
+        );
+      }
+
+      const height = Math.max(
+        8,
+        Math.min(100, peak * 100)
+      );
+
+      bar.style.height = height + "%";
+
+      waveform.appendChild(bar);
     }
 
-    if (limiterControl) {
-      limiterControl.value = "0.65";
-    }
+    const buttons = document.createElement("div");
+    buttons.className = "track-buttons";
 
-    if (masterVolume) {
-      masterVolume.value = "0.8";
-    }
+    const muteButton = createButton(
+      track.muted ? "Unmute" : "Mute",
+      "btn secondary track-mute"
+    );
 
-    updateMasterControls();
-    updateEffectControls();
+    const soloButton = createButton(
+      track.solo ? "Unsolo" : "Solo",
+      "btn secondary track-solo"
+    );
 
-    tracks.forEach((track) => {
+    const removeButton = createButton(
+      "Remove",
+      "btn secondary track-remove"
+    );
+
+    muteButton.addEventListener("click", () => {
+      track.muted = !track.muted;
+
       if (track.gainNode && audioContext) {
         track.gainNode.gain.setTargetAtTime(
-          track.muted ? 0 : track.volume,
+          getEffectiveTrackVolume(track),
           audioContext.currentTime,
-          0.04
+          0.02
+        );
+      }
+
+      renderTracks();
+    });
+
+    soloButton.addEventListener("click", () => {
+      track.solo = !track.solo;
+
+      tracks.forEach((item) => {
+        if (item.gainNode && audioContext) {
+          item.gainNode.gain.setTargetAtTime(
+            getEffectiveTrackVolume(item),
+            audioContext.currentTime,
+            0.02
+          );
+        }
+      });
+
+      renderTracks();
+    });
+
+    removeButton.addEventListener("click", () => {
+      removeTrack(track.id);
+    });
+
+    buttons.append(
+      muteButton,
+      soloButton,
+      removeButton
+    );
+
+    const controls = document.createElement("div");
+    controls.className = "track-controls";
+
+    const volumeLabel = document.createElement("label");
+    volumeLabel.textContent = "Volume";
+
+    const volumeSlider = document.createElement("input");
+    volumeSlider.type = "range";
+    volumeSlider.min = "0";
+    volumeSlider.max = "1";
+    volumeSlider.step = "0.01";
+    volumeSlider.value = String(track.volume);
+
+    volumeSlider.setAttribute(
+      "aria-label",
+      "Track volume"
+    );
+
+    const volumeText = document.createElement("span");
+    volumeText.textContent =
+      Math.round(track.volume * 100) + "%";
+
+    volumeSlider.addEventListener("input", () => {
+      track.volume = Number(volumeSlider.value);
+
+      volumeText.textContent =
+        Math.round(track.volume * 100) + "%";
+
+      if (track.gainNode && audioContext) {
+        track.gainNode.gain.setTargetAtTime(
+          getEffectiveTrackVolume(track),
+          audioContext.currentTime,
+          0.015
         );
       }
     });
 
-    renderTracks();
+    const panLabel = document.createElement("label");
+    panLabel.textContent = "Pan";
 
-    setStatus("Auto Mix complete");
-    notify(
-      "Auto Mix xumurameera. Dhaggeeffadhu; yoo barbaachise sirreessi."
+    const panSlider = document.createElement("input");
+    panSlider.type = "range";
+    panSlider.min = "-1";
+    panSlider.max = "1";
+    panSlider.step = "0.01";
+    panSlider.value = String(track.pan);
+
+    panSlider.setAttribute(
+      "aria-label",
+      "Track stereo pan"
     );
+
+    const panText = document.createElement("span");
+    panText.textContent =
+      track.pan === 0
+        ? "Center"
+        : track.pan < 0
+          ? "Left"
+          : "Right";
+
+    panSlider.addEventListener("input", () => {
+      track.pan = Number(panSlider.value);
+
+      panText.textContent =
+        Math.abs(track.pan) < 0.03
+          ? "Center"
+          : track.pan < 0
+            ? "Left"
+            : "Right";
+
+      if (track.pannerNode && audioContext) {
+        track.pannerNode.pan.setTargetAtTime(
+          track.pan,
+          audioContext.currentTime,
+          0.015
+        );
+      }
+    });
+
+    const speedLabel = document.createElement("label");
+    speedLabel.textContent = "Speed";
+
+    const speedSlider = document.createElement("input");
+    speedSlider.type = "range";
+    speedSlider.min = "0.5";
+    speedSlider.max = "1.5";
+    speedSlider.step = "0.05";
+    speedSlider.value = String(track.speed);
+
+    speedSlider.setAttribute(
+      "aria-label",
+      "Track playback speed"
+    );
+
+    const speedText = document.createElement("span");
+    speedText.textContent =
+      track.speed.toFixed(2) + "x";
+
+    speedSlider.addEventListener("change", () => {
+      track.speed = Number(speedSlider.value);
+
+      speedText.textContent =
+        track.speed.toFixed(2) + "x";
+
+      /*
+       * Restart playback at the current position so the
+       * updated playback rate takes effect.
+       */
+
+      if (isPlaying) {
+        restartPlaybackAtCurrentPosition();
+      }
+    });
+
+    controls.append(
+      volumeLabel,
+      volumeSlider,
+      volumeText,
+      panLabel,
+      panSlider,
+      panText,
+      speedLabel,
+      speedSlider,
+      speedText
+    );
+
+    card.append(
+      header,
+      waveform,
+      buttons,
+      controls
+    );
+
+    return card;
   }
 
-  bind("autoMixBtn", "click", () => {
-    autoMix().catch((error) => {
-      console.error(error);
-      notify("Auto Mix hojjechuu hin dandeenye.");
-    });
-  });
+  function createButton(text, className) {
+    const button = document.createElement("button");
 
-  bind("autoAdjustBtn", "click", () => {
-    autoMix().catch((error) => {
-      console.error(error);
-      notify("Auto Adjust hojjechuu hin dandeenye.");
-    });
-  });
+    button.type = "button";
+    button.textContent = text;
+    button.className = className;
 
-  /* =======================================================
-     TRACK NODES
-  ======================================================= */
-
-  function createTrackNodes(track) {
-    if (!audioContext) return;
-
-    safeDisconnect(track.gainNode);
-    safeDisconnect(track.panNode);
-
-    track.gainNode = audioContext.createGain();
-    track.panNode = audioContext.createStereoPanner();
-
-    track.gainNode.gain.value = track.muted
-      ? 0
-      : track.volume;
-
-    track.panNode.pan.value = track.pan;
-
-    track.gainNode.connect(track.panNode);
-    track.panNode.connect(masterInput);
+    return button;
   }
 
-  function stopTrackSource(track, savePosition = true) {
-    if (!track.source) return;
-
-    if (savePosition && isPlaying) {
-      track.offset = getTransportPosition();
+  function renderTracks() {
+    if (!trackList) {
+      return;
     }
 
-    const source = track.source;
+    trackList.innerHTML = "";
 
-    track.source = null;
+    const activeTracks = tracks.filter(
+      (track) => !track.removed
+    );
+
+    if (activeTracks.length === 0) {
+      const empty = document.createElement("div");
+
+      empty.className = "empty-state";
+      empty.id = "emptyTracks";
+
+      const icon = document.createElement("div");
+      icon.className = "empty-icon";
+      icon.textContent = "♫";
+
+      const heading = document.createElement("h3");
+      heading.textContent = "Your studio is ready";
+
+      const paragraph = document.createElement("p");
+      paragraph.textContent =
+        "Upload an audio file to begin editing and mixing.";
+
+      empty.append(icon, heading, paragraph);
+
+      trackList.appendChild(empty);
+
+      return;
+    }
+
+    activeTracks.forEach((track) => {
+      trackList.appendChild(
+        createTrackElement(track)
+      );
+    });
+  }
+
+  function getEffectiveTrackVolume(track) {
+    const anySolo = tracks.some(
+      (item) => !item.removed && item.solo
+    );
+
+    if (track.muted) {
+      return 0;
+    }
+
+    if (anySolo && !track.solo) {
+      return 0;
+    }
+
+    return clamp(track.volume, 0, 1);
+  }
+
+  function removeTrack(trackId) {
+    const track = tracks.find(
+      (item) => item.id === trackId
+    );
+
+    if (!track) {
+      return;
+    }
+
+    const wasPlaying = isPlaying;
+    const position = getCurrentPosition();
+
+    stopTrackSource(track);
+
+    track.removed = true;
+
+    tracks = tracks.filter(
+      (item) => item.id !== trackId
+    );
+
+    if (wasPlaying) {
+      startPlayback(position);
+    }
+
+    renderTracks();
+    updateTransportDisplay();
+
+    showToast("Track removed.");
+  }
+
+  /* =========================================================
+     PLAYBACK ENGINE
+     ========================================================= */
+
+  function stopTrackSource(track) {
+    if (!track || !track.source) {
+      return;
+    }
 
     try {
-      source.onended = null;
-      source.stop();
+      track.source.onended = null;
+      track.source.stop();
     } catch (_) {
       // The source may already have stopped.
     }
 
-    safeDisconnect(source);
+    try {
+      track.source.disconnect();
+    } catch (_) {}
+
+    try {
+      if (track.gainNode) {
+        track.gainNode.disconnect();
+      }
+    } catch (_) {}
+
+    try {
+      if (track.pannerNode) {
+        track.pannerNode.disconnect();
+      }
+    } catch (_) {}
+
+    track.source = null;
+    track.gainNode = null;
+    track.pannerNode = null;
   }
 
-  function playTrack(track, position = 0) {
-    if (!audioContext || !track) return;
+  function applyTrackFade(track, gainNode, startTime, offset, duration) {
+    const fadeIn = clamp(
+      track.fadeIn || readControl(fadeInControl, 0),
+      0,
+      10
+    );
 
-    stopTrackSource(track, false);
-    createTrackNodes(track);
+    const fadeOut = clamp(
+      track.fadeOut || readControl(fadeOutControl, 0),
+      0,
+      10
+    );
+
+    const effectiveVolume =
+      getEffectiveTrackVolume(track);
+
+    const endTime =
+      startTime + Math.max(0, duration);
+
+    gainNode.gain.cancelScheduledValues(startTime);
+
+    if (fadeIn > 0 && offset < fadeIn) {
+      gainNode.gain.setValueAtTime(
+        0,
+        startTime
+      );
+
+      gainNode.gain.linearRampToValueAtTime(
+        effectiveVolume,
+        Math.min(
+          endTime,
+          startTime + fadeIn - offset
+        )
+      );
+
+    } else {
+      gainNode.gain.setValueAtTime(
+        effectiveVolume,
+        startTime
+      );
+    }
+
+    if (fadeOut > 0 && duration > fadeOut) {
+      const fadeStart = endTime - fadeOut;
+
+      gainNode.gain.setValueAtTime(
+        effectiveVolume,
+        Math.max(startTime, fadeStart)
+      );
+
+      gainNode.gain.linearRampToValueAtTime(
+        0,
+        endTime
+      );
+    }
+  }
+
+  function startTrackSource(track, position) {
+    if (!audioContext || !audioGraph || !track.buffer) {
+      return;
+    }
+
+    const speed = clamp(track.speed || 1, 0.5, 1.5);
 
     const source = audioContext.createBufferSource();
+    const gainNode = audioContext.createGain();
+    const pannerNode = audioContext.createStereoPanner();
 
     source.buffer = track.buffer;
-
-    const speed = clamp(
-      getNumber("speedControl", 1),
-      0.25,
-      2
-    );
-
-    const pitch = clamp(
-      getNumber("pitchControl", 0),
-      -12,
-      12
-    );
-
     source.playbackRate.value = speed;
-    source.detune.value = pitch * 100;
 
-    source.connect(track.gainNode);
+    /*
+     * Playback rate changes speed and pitch together.
+     * Independent pitch correction is not implemented here.
+     */
 
-    const startPosition = clamp(
+    source.connect(gainNode);
+    gainNode.connect(pannerNode);
+    pannerNode.connect(audioGraph.masterInput);
+
+    pannerNode.pan.value = track.pan;
+
+    const durationRemaining =
+      (track.buffer.duration - position) / speed;
+
+    if (durationRemaining <= 0) {
+      return;
+    }
+
+    const startTime = audioContext.currentTime + 0.02;
+
+    applyTrackFade(
+      track,
+      gainNode,
+      startTime,
       position,
-      0,
-      Math.max(0, track.buffer.duration - 0.001)
+      durationRemaining
     );
-
-    const now = audioContext.currentTime;
-
-    const fadeIn = Math.max(
-      0,
-      getNumber("fadeInControl", 0)
-    );
-
-    const fadeOut = Math.max(
-      0,
-      getNumber("fadeOutControl", 0)
-    );
-
-    track.gainNode.gain.cancelScheduledValues(now);
-
-    const targetVolume = track.muted
-      ? 0
-      : track.volume;
-
-    track.gainNode.gain.setValueAtTime(
-      fadeIn > 0 && startPosition === 0 ? 0 : targetVolume,
-      now
-    );
-
-    if (fadeIn > 0 && startPosition === 0) {
-      track.gainNode.gain.linearRampToValueAtTime(
-        targetVolume,
-        now + Math.min(fadeIn, track.buffer.duration / 2)
-      );
-    }
-
-    if (
-      fadeOut > 0 &&
-      track.buffer.duration > startPosition + fadeOut
-    ) {
-      const fadeStart =
-        track.buffer.duration - fadeOut - startPosition;
-
-      track.gainNode.gain.setValueAtTime(
-        targetVolume,
-        now + Math.max(0, fadeStart / speed)
-      );
-
-      track.gainNode.gain.linearRampToValueAtTime(
-        0,
-        now + (track.buffer.duration - startPosition) / speed
-      );
-    }
 
     track.source = source;
-    track.offset = startPosition;
+    track.gainNode = gainNode;
+    track.pannerNode = pannerNode;
+    track.startedAt = startTime;
+    track.startOffset = position;
 
     source.onended = () => {
       if (track.source === source) {
@@ -1024,506 +1514,136 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     };
 
-    if (startPosition < track.buffer.duration) {
-      source.start(now, startPosition);
-    }
-
-    return source;
+    source.start(
+      startTime,
+      clamp(position, 0, track.buffer.duration)
+    );
   }
 
-  /* =======================================================
-     TRACK UI
-  ======================================================= */
+  async function startPlayback(position = 0) {
+    const activeTracks = tracks.filter(
+      (track) => !track.removed && track.buffer
+    );
 
-  function createTrackElement(track) {
-    if (!trackList) return null;
+    if (activeTracks.length === 0) {
+      showToast("Upload an audio file before pressing Play.");
+      return;
+    }
 
-    const wrapper = document.createElement("div");
-    wrapper.className = "track";
-    wrapper.dataset.trackId = String(track.id);
+    try {
+      await ensureAudioContext();
+      setupEffectsGraph();
 
-    const header = document.createElement("div");
-    header.className = "track-header";
+      stopAllSources();
 
-    const title = document.createElement("strong");
-    title.className = "track-title";
-    title.textContent = track.name;
+      const totalDuration = getTrackDuration();
 
-    const selectButton = document.createElement("button");
-    selectButton.type = "button";
-    selectButton.textContent = "Select";
+      position = clamp(position, 0, totalDuration);
 
-    selectButton.addEventListener("click", () => {
-      selectedTrackId = track.id;
-
-      document
-        .querySelectorAll(".track.selected")
-        .forEach((element) => {
-          element.classList.remove("selected");
-        });
-
-      wrapper.classList.add("selected");
-
-      setText("currentTrackName", track.name);
-      setStatus("Selected: " + track.name);
-    });
-
-    header.append(title, selectButton);
-
-    const waveform = document.createElement("canvas");
-    waveform.className = "track-waveform";
-    waveform.width = 900;
-    waveform.height = 90;
-    waveform.style.width = "100%";
-    waveform.style.maxWidth = "100%";
-
-    const controls = document.createElement("div");
-    controls.className = "track-controls";
-
-    const volumeLabel = document.createElement("label");
-    volumeLabel.textContent = "Volume ";
-
-    const volume = document.createElement("input");
-    volume.type = "range";
-    volume.min = "0";
-    volume.max = "1";
-    volume.step = "0.01";
-    volume.value = String(track.volume);
-
-    volume.addEventListener("input", () => {
-      track.volume = Number(volume.value);
-
-      if (track.gainNode && audioContext) {
-        track.gainNode.gain.setTargetAtTime(
-          track.muted ? 0 : track.volume,
-          audioContext.currentTime,
-          0.02
-        );
+      if (position >= totalDuration) {
+        position = 0;
       }
 
-      const value = wrapper.querySelector(".track-volume-value");
+      playbackStartOffset = position;
+      pausedAt = position;
+      playbackStartTime = audioContext.currentTime + 0.02;
 
-      if (value) {
-        value.textContent =
-          Math.round(track.volume * 100) + "%";
-      }
-    });
-
-    const volumeValue = document.createElement("span");
-    volumeValue.className = "track-volume-value";
-    volumeValue.textContent =
-      Math.round(track.volume * 100) + "%";
-
-    volumeLabel.append(volume, volumeValue);
-
-    const panLabel = document.createElement("label");
-    panLabel.textContent = "Pan ";
-
-    const pan = document.createElement("input");
-    pan.type = "range";
-    pan.min = "-1";
-    pan.max = "1";
-    pan.step = "0.01";
-    pan.value = String(track.pan);
-
-    pan.addEventListener("input", () => {
-      track.pan = Number(pan.value);
-
-      if (track.panNode && audioContext) {
-        track.panNode.pan.setTargetAtTime(
-          track.pan,
-          audioContext.currentTime,
-          0.02
-        );
-      }
-    });
-
-    panLabel.appendChild(pan);
-
-    const muteButton = document.createElement("button");
-    muteButton.type = "button";
-    muteButton.textContent = track.muted ? "Unmute" : "Mute";
-
-    muteButton.addEventListener("click", () => {
-      track.muted = !track.muted;
-      muteButton.textContent = track.muted ? "Unmute" : "Mute";
-
-      if (track.gainNode && audioContext) {
-        track.gainNode.gain.setTargetAtTime(
-          track.muted ? 0 : track.volume,
-          audioContext.currentTime,
-          0.02
-        );
-      }
-    });
-
-    const soloButton = document.createElement("button");
-    soloButton.type = "button";
-    soloButton.textContent = track.solo ? "Unsolo" : "Solo";
-
-    soloButton.addEventListener("click", () => {
-      track.solo = !track.solo;
-
-      if (track.solo) {
-        tracks.forEach((other) => {
-          other.solo = other.id === track.id;
-        });
-      } else {
-        tracks.forEach((other) => {
-          other.solo = false;
-        });
-      }
-
-      applySoloState();
-      renderTracks();
-    });
-
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.textContent = "Remove";
-
-    removeButton.addEventListener("click", () => {
-      removeTrack(track.id);
-    });
-
-    const exportButton = document.createElement("button");
-    exportButton.type = "button";
-    exportButton.textContent = "Export WAV";
-
-    exportButton.addEventListener("click", () => {
-      exportSingleTrack(track).catch((error) => {
-        console.error(error);
-        notify("Track export hin milkoofne.");
+      activeTracks.forEach((track) => {
+        if (position < track.buffer.duration / track.speed) {
+          startTrackSource(track, position * track.speed);
+        }
       });
-    });
 
-    controls.append(
-      volumeLabel,
-      panLabel,
-      muteButton,
-      soloButton,
-      exportButton,
-      removeButton
-    );
+      /*
+       * Keyboard events are replayed when playback begins.
+       */
 
-    wrapper.append(header, waveform, controls);
+      scheduleKeyboardEvents(position);
 
-    trackList.appendChild(wrapper);
+      isPlaying = true;
 
-    trackElements.set(track.id, {
-      wrapper,
-      waveform
-    });
+      setStatus("Playing audio...");
 
-    drawWaveform(track, waveform);
+      updateTransportDisplay();
+      startPlaybackTimer();
 
-    return wrapper;
-  }
+    } catch (error) {
+      console.error("Playback failed:", error);
 
-  function drawWaveform(track, canvas) {
-    if (!canvas) return;
-
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    const width = canvas.width;
-    const height = canvas.height;
-
-    context.clearRect(0, 0, width, height);
-
-    context.fillStyle = "#111827";
-    context.fillRect(0, 0, width, height);
-
-    context.strokeStyle = "#273449";
-    context.lineWidth = 1;
-
-    context.beginPath();
-    context.moveTo(0, height / 2);
-    context.lineTo(width, height / 2);
-    context.stroke();
-
-    const data = track.buffer.getChannelData(0);
-    const step = Math.max(1, Math.floor(data.length / width));
-
-    context.strokeStyle = "#39d5ff";
-    context.lineWidth = 1;
-
-    context.beginPath();
-
-    for (let x = 0; x < width; x++) {
-      const start = x * step;
-      const end = Math.min(data.length, start + step);
-
-      let minimum = 1;
-      let maximum = -1;
-
-      for (let i = start; i < end; i++) {
-        minimum = Math.min(minimum, data[i]);
-        maximum = Math.max(maximum, data[i]);
-      }
-
-      const top = (1 - maximum) * height / 2;
-      const bottom = (1 - minimum) * height / 2;
-
-      context.moveTo(x, top);
-      context.lineTo(x, bottom);
+      showToast(
+        error.message || "Could not start audio playback.",
+        5000
+      );
     }
-
-    context.stroke();
   }
 
-  function renderTracks() {
-    if (!trackList) return;
-
-    trackList.innerHTML = "";
-    trackElements.clear();
-
-    tracks.forEach((track) => {
-      createTrackElement(track);
-    });
+  function stopAllSources() {
+    tracks.forEach(stopTrackSource);
   }
 
-  function applySoloState() {
-    const hasSolo = tracks.some((track) => track.solo);
-
-    tracks.forEach((track) => {
-      const shouldMute =
-        track.muted || (hasSolo && !track.solo);
-
-      if (track.gainNode && audioContext) {
-        track.gainNode.gain.setTargetAtTime(
-          shouldMute ? 0 : track.volume,
-          audioContext.currentTime,
-          0.02
-        );
-      }
-    });
-  }
-
-  /* =======================================================
-     TRACK ADD / REMOVE / UPLOAD
-  ======================================================= */
-
-  async function addAudioFile(file) {
-    if (!file) return;
-
-    if (
-      file.type &&
-      !file.type.startsWith("audio/") &&
-      !/\.(wav|mp3|ogg|m4a|aac|flac|webm|opus)$/i.test(file.name)
-    ) {
-      notify("Faayila audio filadhu.");
+  function pausePlayback() {
+    if (!isPlaying) {
       return;
     }
 
-    await ensureAudioContext();
+    pausedAt = getCurrentPosition();
 
-    const arrayBuffer = await file.arrayBuffer();
+    isPlaying = false;
 
-    const decodedBuffer = await audioContext.decodeAudioData(
-      arrayBuffer.slice(0)
-    );
+    stopAllSources();
+    stopKeyboardVoices();
 
-    const track = {
-      id: nextTrackId++,
-      name: file.name || "Audio Track",
-      buffer: decodedBuffer,
-      volume: 0.8,
-      pan: 0,
-      muted: false,
-      solo: false,
-      source: null,
-      gainNode: null,
-      panNode: null,
-      offset: 0,
-      rms: 0,
-      peak: 0
-    };
+    clearInterval(playbackTimer);
 
-    const analysis = analyseBuffer(decodedBuffer);
-
-    track.rms = analysis.rms;
-    track.peak = analysis.peak;
-
-    tracks.push(track);
-
-    if (selectedTrackId === null) {
-      selectedTrackId = track.id;
-    }
-
-    renderTracks();
+    setStatus("Playback paused.");
 
     updateTransportDisplay();
-
-    setStatus("Audio added: " + track.name);
-    notify("Audio upload milkaa'e: " + track.name);
   }
 
-  function removeTrack(trackId) {
-    const index = tracks.findIndex(
-      (track) => track.id === trackId
-    );
+  function stopPlayback() {
+    isPlaying = false;
 
-    if (index === -1) return;
+    pausedAt = 0;
+    playbackStartOffset = 0;
 
-    const track = tracks[index];
+    stopAllSources();
+    stopKeyboardVoices();
 
-    stopTrackSource(track, false);
+    clearInterval(playbackTimer);
 
-    safeDisconnect(track.gainNode);
-    safeDisconnect(track.panNode);
+    setStatus("Playback stopped.");
 
-    tracks.splice(index, 1);
-
-    if (selectedTrackId === trackId) {
-      selectedTrackId = tracks.length
-        ? tracks[0].id
-        : null;
-    }
-
-    renderTracks();
     updateTransportDisplay();
-
-    notify("Track haqameera.");
   }
 
-  bind("audioUpload", "change", async (event) => {
-    const files = Array.from(event.target.files || []);
+  function restartPlaybackAtCurrentPosition() {
+    const position = getCurrentPosition();
 
-    if (!files.length) return;
-
-    for (const file of files) {
-      try {
-        await addAudioFile(file);
-      } catch (error) {
-        console.error("Audio upload error:", error);
-
-        notify(
-          "Audio hin banne. Faayila audio biraa yaali."
-        );
-      }
+    if (isPlaying) {
+      startPlayback(position);
     }
+  }
 
-    event.target.value = "";
-  });
+  function startPlaybackTimer() {
+    clearInterval(playbackTimer);
 
-  /* =======================================================
-     TRANSPORT
-  ======================================================= */
-
-  async function playAllTracks(position = null) {
-    await ensureAudioContext();
-
-    if (!tracks.length && !keyboardEvents.length) {
-      notify("Jalqaba audio upload godhi ykn keyboard taphadhu.");
-      return;
-    }
-
-    if (position !== null) {
-      transportPosition = position;
-    }
-
-    const duration = getMasterDuration();
-
-    if (transportPosition >= duration) {
-      transportPosition = 0;
-    }
-
-    isPlaying = true;
-    transportStartTime = audioContext.currentTime;
-
-    tracks.forEach((track) => {
-      const hasSolo = tracks.some((item) => item.solo);
-
-      if (hasSolo && !track.solo) {
+    playbackTimer = setInterval(() => {
+      if (!isPlaying) {
         return;
       }
 
-      if (track.muted) return;
-
-      playTrack(track, transportPosition);
-    });
-
-    scheduleKeyboardPlayback(transportPosition);
-
-    startTransportTimer();
-
-    setStatus("Playing");
-  }
-
-  function pauseAllTracks() {
-    if (!isPlaying) return;
-
-    transportPosition = getTransportPosition();
-    isPlaying = false;
-
-    tracks.forEach((track) => {
-      stopTrackSource(track, false);
-    });
-
-    stopKeyboardPlayback();
-
-    if (transportTimer) {
-      clearInterval(transportTimer);
-      transportTimer = null;
-    }
-
-    updateTransportDisplay();
-    setStatus("Paused");
-  }
-
-  function stopAllTracks() {
-    isPlaying = false;
-    transportPosition = 0;
-
-    tracks.forEach((track) => {
-      stopTrackSource(track, false);
-    });
-
-    stopKeyboardPlayback();
-
-    keyboardActiveNotes.forEach((note) => {
-      try {
-        note.oscillator.stop();
-      } catch (_) {
-        // Oscillator may already have stopped.
-      }
-    });
-
-    keyboardActiveNotes.clear();
-
-    if (transportTimer) {
-      clearInterval(transportTimer);
-      transportTimer = null;
-    }
-
-    updateTransportDisplay();
-    setStatus("Stopped");
-  }
-
-  function startTransportTimer() {
-    if (transportTimer) {
-      clearInterval(transportTimer);
-    }
-
-    transportTimer = setInterval(() => {
       updateTransportDisplay();
 
-      const duration = getMasterDuration();
-
-      if (
-        isPlaying &&
-        getTransportPosition() >= duration
-      ) {
-        stopAllTracks();
-        setStatus("Playback complete");
+      if (getCurrentPosition() >= getTrackDuration()) {
+        stopPlayback();
+        setStatus("Playback finished.");
       }
     }, 100);
   }
 
   function updateTransportDisplay() {
-    const position = getTransportPosition();
-    const duration = getMasterDuration();
+    const position = getCurrentPosition();
+    const duration = getTrackDuration();
 
     if (currentTime) {
       currentTime.textContent = formatTime(position);
@@ -1534,174 +1654,287 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     if (seekBar) {
-      seekBar.max = String(Math.max(duration, 0.01));
-      seekBar.value = String(
-        clamp(position, 0, Math.max(duration, 0.01))
-      );
+      seekBar.value =
+        duration > 0
+          ? String((position / duration) * 100)
+          : "0";
     }
 
     if (currentTrackName) {
-      const selected = tracks.find(
-        (track) => track.id === selectedTrackId
+      const activeTracks = tracks.filter(
+        (track) => !track.removed
       );
 
-      if (selected) {
-        currentTrackName.textContent = selected.name;
-      } else if (keyboardRecording) {
-        currentTrackName.textContent = "Keyboard Recording";
+      if (activeTracks.length === 0) {
+        currentTrackName.textContent = "No audio selected";
+      } else if (activeTracks.length === 1) {
+        currentTrackName.textContent =
+          activeTracks[0].name;
       } else {
-        currentTrackName.textContent = "No track selected";
+        currentTrackName.textContent =
+          activeTracks.length + " tracks in mix";
       }
     }
   }
 
-  bind("playBtn", "click", () => {
-    playAllTracks().catch((error) => {
-      console.error(error);
-      notify("Playback jalqabuu hin dandeenye.");
+  if (playBtn) {
+    playBtn.addEventListener("click", async () => {
+      if (isPlaying) {
+        return;
+      }
+
+      await startPlayback(getCurrentPosition());
     });
-  });
+  }
 
-  bind("pauseBtn", "click", pauseAllTracks);
-  bind("stopBtn", "click", stopAllTracks);
-
-  bind("seekBar", "input", (event) => {
-    const newPosition = Math.max(
-      0,
-      Number(event.target.value) || 0
+  if (pauseBtn) {
+    pauseBtn.addEventListener(
+      "click",
+      pausePlayback
     );
+  }
 
-    if (isPlaying) {
-      pauseAllTracks();
-      transportPosition = newPosition;
+  if (stopBtn) {
+    stopBtn.addEventListener(
+      "click",
+      stopPlayback
+    );
+  }
 
-      playAllTracks(newPosition).catch((error) => {
-        console.error(error);
-      });
-    } else {
-      transportPosition = newPosition;
-      updateTransportDisplay();
-    }
-  });
+  if (seekBar) {
+    seekBar.addEventListener("input", () => {
+      const duration = getTrackDuration();
 
-  /* =======================================================
-     MASTER RECORDING
-  ======================================================= */
+      const target =
+        (Number(seekBar.value) / 100) * duration;
 
-  async function startMasterRecording() {
-    await ensureAudioContext();
-
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-      notify("Recording duraan jalqabameera.");
-      return;
-    }
-
-    recordedChunks = [];
-
-    const mimeType = getSupportedRecorderMimeType();
-
-    try {
-      mediaRecorder = mimeType
-        ? new MediaRecorder(
-            recordingDestination.stream,
-            { mimeType }
-          )
-        : new MediaRecorder(recordingDestination.stream);
-    } catch (error) {
-      console.error(error);
-      notify("Browser kee audio recording hin deeggaru.");
-      return;
-    }
-
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        recordedChunks.push(event.data);
+      if (currentTime) {
+        currentTime.textContent = formatTime(target);
       }
-    };
+    });
 
-    mediaRecorder.onstop = () => {
-      const type =
-        mediaRecorder && mediaRecorder.mimeType
-          ? mediaRecorder.mimeType
-          : "audio/webm";
+    seekBar.addEventListener("change", () => {
+      const duration = getTrackDuration();
 
-      const blob = new Blob(recordedChunks, { type });
+      const target =
+        (Number(seekBar.value) / 100) * duration;
 
-      if (blob.size > 0) {
-        downloadBlob(blob, "naol-master-recording.webm");
+      if (isPlaying) {
+        startPlayback(target);
+      } else {
+        pausedAt = target;
+        updateTransportDisplay();
       }
-
-      recordedChunks = [];
-
-      setText("recordStatus", "Recording saved");
-      notify("Recording buufameera.");
-    };
-
-    mediaRecorder.start(250);
-
-    setText("recordStatus", "Recording...");
-    setStatus("Master recording");
-    notify("Master recording jalqabame.");
+    });
   }
 
-  function stopMasterRecording() {
-    if (
-      !mediaRecorder ||
-      mediaRecorder.state !== "recording"
-    ) {
-      notify("Recording hin jalqabamne.");
+  /* =========================================================
+     MASTER VOLUME AND EFFECT LISTENERS
+     ========================================================= */
+
+  [
+    masterVolume,
+    panControl,
+    bassControl,
+    midControl,
+    trebleControl
+  ].forEach((control) => {
+    if (!control) {
       return;
     }
 
-    mediaRecorder.stop();
-    setText("recordStatus", "Saving recording...");
-  }
-
-  function getSupportedRecorderMimeType() {
-    if (typeof MediaRecorder === "undefined") {
-      return "";
-    }
-
-    const types = [
-      "audio/webm;codecs=opus",
-      "audio/ogg;codecs=opus",
-      "audio/webm",
-      "audio/ogg"
-    ];
-
-    return types.find((type) =>
-      MediaRecorder.isTypeSupported(type)
-    ) || "";
-  }
-
-  bind("recordBtn", "click", () => {
-    startMasterRecording().catch((error) => {
-      console.error(error);
-      notify("Recording jalqabuu hin dandeenye.");
+    control.addEventListener("input", () => {
+      updateMasterControls();
     });
   });
 
-  bind("stopRecordBtn", "click", stopMasterRecording);
+  [
+    reverbControl,
+    delayControl,
+    compressorControl,
+    noiseGateControl,
+    chorusControl,
+    limiterControl
+  ].forEach((control) => {
+    if (!control) {
+      return;
+    }
 
-  /* =======================================================
+    control.addEventListener("input", () => {
+      updateEffects();
+    });
+  });
+
+  [
+    pitchControl,
+    speedControl,
+    fadeInControl,
+    fadeOutControl
+  ].forEach((control) => {
+    if (!control) {
+      return;
+    }
+
+    control.addEventListener("input", () => {
+      updateControlLabels();
+    });
+  });
+
+  /* =========================================================
+     RESET EFFECTS
+     ========================================================= */
+
+  if (resetEffectsBtn) {
+    resetEffectsBtn.addEventListener("click", () => {
+      if (reverbControl) reverbControl.value = "0";
+      if (delayControl) delayControl.value = "0";
+      if (compressorControl) compressorControl.value = "0.25";
+      if (noiseGateControl) noiseGateControl.value = "0";
+      if (chorusControl) chorusControl.value = "0";
+      if (limiterControl) limiterControl.value = "0.5";
+
+      if (bassControl) bassControl.value = "0";
+      if (midControl) midControl.value = "0";
+      if (trebleControl) trebleControl.value = "0";
+
+      updateMasterControls();
+      updateEffects();
+
+      showToast("Audio effects have been reset.");
+    });
+  }
+
+  /* =========================================================
+     VOCAL PRESETS
+     ========================================================= */
+
+  function applySelectedPreset() {
+    if (!vocalPreset) {
+      return;
+    }
+
+    const preset = vocalPreset.value;
+
+    const presets = {
+      none: {
+        bass: 0,
+        mid: 0,
+        treble: 0,
+        reverb: 0,
+        delay: 0,
+        compressor: 0.25,
+        chorus: 0,
+        limiter: 0.5
+      },
+
+      clean: {
+        bass: 1,
+        mid: 0,
+        treble: 2,
+        reverb: 0.08,
+        delay: 0,
+        compressor: 0.4,
+        chorus: 0,
+        limiter: 0.5
+      },
+
+      warm: {
+        bass: 3,
+        mid: 1,
+        treble: -1,
+        reverb: 0.12,
+        delay: 0.02,
+        compressor: 0.45,
+        chorus: 0.04,
+        limiter: 0.55
+      },
+
+      bright: {
+        bass: -1,
+        mid: 1,
+        treble: 4,
+        reverb: 0.1,
+        delay: 0,
+        compressor: 0.35,
+        chorus: 0.02,
+        limiter: 0.5
+      },
+
+      room: {
+        bass: 0,
+        mid: 0,
+        treble: 1,
+        reverb: 0.42,
+        delay: 0.08,
+        compressor: 0.25,
+        chorus: 0.04,
+        limiter: 0.5
+      },
+
+      radio: {
+        bass: 3,
+        mid: 4,
+        treble: 2,
+        reverb: 0.03,
+        delay: 0,
+        compressor: 0.7,
+        chorus: 0,
+        limiter: 0.8
+      }
+    };
+
+    const settings = presets[preset] || presets.none;
+
+    if (bassControl) bassControl.value = settings.bass;
+    if (midControl) midControl.value = settings.mid;
+    if (trebleControl) trebleControl.value = settings.treble;
+
+    if (reverbControl) reverbControl.value = settings.reverb;
+    if (delayControl) delayControl.value = settings.delay;
+
+    if (compressorControl) {
+      compressorControl.value = settings.compressor;
+    }
+
+    if (chorusControl) chorusControl.value = settings.chorus;
+    if (limiterControl) limiterControl.value = settings.limiter;
+
+    updateMasterControls();
+    updateEffects();
+
+    showToast("Vocal preset applied: " + preset);
+  }
+
+  if (applyPresetBtn) {
+    applyPresetBtn.addEventListener(
+      "click",
+      applySelectedPreset
+    );
+  }
+
+  /* =========================================================
      MICROPHONE RECORDING
-  ======================================================= */
+     ========================================================= */
 
   async function startMicrophoneRecording() {
-    if (!navigator.mediaDevices ||
-        !navigator.mediaDevices.getUserMedia) {
-      notify("Browser kee microphone access hin deeggaru.");
+    if (isRecordingMicrophone) {
       return;
     }
 
-    await ensureAudioContext();
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+      showToast(
+        "Microphone access is unavailable. Use HTTPS and a supported browser.",
+        5000
+      );
 
-    if (microphoneStream) {
-      notify("Microphone recording duraan banameera.");
       return;
     }
 
     try {
+      await ensureAudioContext();
+      setupEffectsGraph();
+
       microphoneStream =
         await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -1712,154 +1945,274 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
       microphoneSource =
-        audioContext.createMediaStreamSource(microphoneStream);
+        audioContext.createMediaStreamSource(
+          microphoneStream
+        );
 
-      microphoneGain = audioContext.createGain();
-      microphoneGain.gain.value = 0.8;
+      microphoneTrackGain =
+        audioContext.createGain();
 
-      microphoneSource.connect(microphoneGain);
-      microphoneGain.connect(masterInput);
+      microphoneTrackGain.gain.value = 1;
 
-      setText("recordStatus", "Microphone active");
-      setStatus("Microphone active");
+      microphoneSource.connect(microphoneTrackGain);
 
-      notify("Microphone hojii irra jira.");
+      microphoneTrackGain.connect(
+        audioGraph.masterInput
+      );
+
+      microphoneChunks = [];
+
+      const recordingStream =
+        audioGraph.recordingDestination.stream;
+
+      let mimeType = "";
+
+      if (window.MediaRecorder) {
+        const mimeCandidates = [
+          "audio/webm;codecs=opus",
+          "audio/webm",
+          "audio/ogg;codecs=opus",
+          "audio/ogg"
+        ];
+
+        mimeType = mimeCandidates.find((type) =>
+          MediaRecorder.isTypeSupported(type)
+        ) || "";
+
+        microphoneRecorder = mimeType
+          ? new MediaRecorder(recordingStream, {
+              mimeType
+            })
+          : new MediaRecorder(recordingStream);
+
+        microphoneRecorder.addEventListener(
+          "dataavailable",
+          (event) => {
+            if (event.data && event.data.size > 0) {
+              microphoneChunks.push(event.data);
+            }
+          }
+        );
+
+        microphoneRecorder.addEventListener(
+          "stop",
+          async () => {
+            await finishMicrophoneRecording();
+          }
+        );
+
+        microphoneRecorder.start(250);
+      }
+
+      isRecordingMicrophone = true;
+
+      if (recordBtn) {
+        recordBtn.disabled = true;
+      }
+
+      if (stopRecordBtn) {
+        stopRecordBtn.disabled = false;
+      }
+
+      if (recordStatus) {
+        recordStatus.textContent = "Recording microphone...";
+      }
+
+      setStatus("Microphone recording started.");
+
+      showToast("Microphone recording started.");
+
     } catch (error) {
-      console.error(error);
+      console.error(
+        "Microphone recording failed:",
+        error
+      );
+
+      if (microphoneStream) {
+        microphoneStream.getTracks().forEach(
+          (track) => track.stop()
+        );
+      }
 
       microphoneStream = null;
 
-      notify(
-        "Microphone hin banamne. Permission browser kee ilaali."
+      if (recordStatus) {
+        recordStatus.textContent =
+          "Microphone permission unavailable";
+      }
+
+      showToast(
+        "Could not start microphone recording: " +
+          (error.message || "permission denied"),
+        6000
       );
     }
   }
 
   function stopMicrophoneRecording() {
-    if (!microphoneStream) {
-      notify("Microphone hin banamne.");
+    if (!isRecordingMicrophone) {
       return;
     }
 
-    safeDisconnect(microphoneSource);
-    safeDisconnect(microphoneGain);
+    isRecordingMicrophone = false;
 
-    microphoneStream.getTracks().forEach((track) => {
-      track.stop();
-    });
+    if (microphoneRecorder &&
+        microphoneRecorder.state !== "inactive") {
+      microphoneRecorder.stop();
+    } else {
+      finishMicrophoneRecording();
+    }
 
-    microphoneStream = null;
-    microphoneSource = null;
-    microphoneGain = null;
+    if (recordBtn) {
+      recordBtn.disabled = false;
+    }
 
-    setText("recordStatus", "Microphone stopped");
-    notify("Microphone cufameera.");
+    if (stopRecordBtn) {
+      stopRecordBtn.disabled = true;
+    }
+
+    if (recordStatus) {
+      recordStatus.textContent = "Processing recording...";
+    }
+
+    setStatus("Finishing microphone recording...");
   }
 
-  bind("micRecordBtn", "click", () => {
-    startMicrophoneRecording().catch((error) => {
-      console.error(error);
-      notify("Microphone jalqabuu hin dandeenye.");
-    });
-  });
+  async function finishMicrophoneRecording() {
+    const chunks = microphoneChunks.slice();
 
-  bind("startMicBtn", "click", () => {
-    startMicrophoneRecording().catch(console.error);
-  });
-
-  bind("stopMicBtn", "click", stopMicrophoneRecording);
-
-  bind("stopMicrophoneBtn", "click", stopMicrophoneRecording);
-
-  /* =======================================================
-     VIRTUAL KEYBOARD
-  ======================================================= */
-
-  const NOTE_FREQUENCIES = {
-    C3: 130.813,
-    "C#3": 138.591,
-    Db3: 138.591,
-    D3: 146.832,
-    "D#3": 155.563,
-    Eb3: 155.563,
-    E3: 164.814,
-    F3: 174.614,
-    "F#3": 184.997,
-    Gb3: 184.997,
-    G3: 195.998,
-    "G#3": 207.652,
-    Ab3: 207.652,
-    A3: 220,
-    "A#3": 233.082,
-    Bb3: 233.082,
-    B3: 246.942,
-
-    C4: 261.626,
-    "C#4": 277.183,
-    Db4: 277.183,
-    D4: 293.665,
-    "D#4": 311.127,
-    Eb4: 311.127,
-    E4: 329.628,
-    F4: 349.228,
-    "F#4": 369.994,
-    Gb4: 369.994,
-    G4: 391.995,
-    "G#4": 415.305,
-    Ab4: 415.305,
-    A4: 440,
-    "A#4": 466.164,
-    Bb4: 466.164,
-    B4: 493.883,
-
-    C5: 523.251,
-    "C#5": 554.365,
-    Db5: 554.365,
-    D5: 587.330,
-    "D#5": 622.254,
-    Eb5: 622.254,
-    E5: 659.255,
-    F5: 698.456,
-    "F#5": 739.989,
-    Gb5: 739.989,
-    G5: 783.991,
-    "G#5": 830.609,
-    Ab5: 830.609,
-    A5: 880,
-    "A#5": 932.328,
-    Bb5: 932.328,
-    B5: 987.767,
-
-    C6: 1046.502
-  };
-
-  function getNoteFrequency(note) {
-    if (typeof note === "number") {
-      return note > 0 ? note : null;
+    if (microphoneSource) {
+      try {
+        microphoneSource.disconnect();
+      } catch (_) {}
     }
 
-    if (!note) return null;
-
-    const cleanNote = String(note)
-      .trim()
-      .replace(/♯/g, "#")
-      .replace(/♭/g, "b");
-
-    if (NOTE_FREQUENCIES[cleanNote]) {
-      return NOTE_FREQUENCIES[cleanNote];
+    if (microphoneTrackGain) {
+      try {
+        microphoneTrackGain.disconnect();
+      } catch (_) {}
     }
 
-    const match = cleanNote.match(
-      /^([A-Ga-g])([#b]?)(-?\d+)$/
+    if (microphoneStream) {
+      microphoneStream.getTracks().forEach(
+        (track) => track.stop()
+      );
+    }
+
+    microphoneSource = null;
+    microphoneTrackGain = null;
+    microphoneStream = null;
+    microphoneRecorder = null;
+    microphoneChunks = [];
+
+    if (chunks.length === 0) {
+      if (recordStatus) {
+        recordStatus.textContent = "No audio recorded";
+      }
+
+      setStatus("Recording stopped.");
+
+      return;
+    }
+
+    try {
+      const mimeType =
+        chunks[0].type || "audio/webm";
+
+      const blob = new Blob(chunks, {
+        type: mimeType
+      });
+
+      const buffer = await blob.arrayBuffer();
+
+      const decoded =
+        await audioContext.decodeAudioData(
+          buffer.slice(0)
+        );
+
+      const track = {
+        id: nextTrackId++,
+        name: "Microphone Recording " +
+          new Date().toLocaleTimeString(),
+        originalFileName: "microphone-recording",
+        size: blob.size,
+        buffer: decoded,
+        volume: 1,
+        pan: 0,
+        muted: false,
+        solo: false,
+        removed: false,
+        speed: 1,
+        pitch: 0,
+        fadeIn: 0,
+        fadeOut: 0,
+        source: null,
+        gainNode: null,
+        pannerNode: null,
+        startedAt: 0,
+        startOffset: 0
+      };
+
+      tracks.push(track);
+
+      renderTracks();
+      updateTransportDisplay();
+
+      if (recordStatus) {
+        recordStatus.textContent = "Recording added to tracks";
+      }
+
+      setStatus("Microphone recording added to your project.");
+
+      showToast(
+        "Microphone recording added to your tracks."
+      );
+
+    } catch (error) {
+      console.error(
+        "Could not decode microphone recording:",
+        error
+      );
+
+      if (recordStatus) {
+        recordStatus.textContent = "Recording could not be decoded";
+      }
+
+      showToast(
+        "Recording was created, but the browser could not decode it. Try another browser.",
+        6000
+      );
+    }
+  }
+
+  if (recordBtn) {
+    recordBtn.addEventListener(
+      "click",
+      startMicrophoneRecording
+    );
+  }
+
+  if (stopRecordBtn) {
+    stopRecordBtn.addEventListener(
+      "click",
+      stopMicrophoneRecording
     );
 
-    if (!match) return null;
+    stopRecordBtn.disabled = true;
+  }
 
-    const letter = match[1].toUpperCase();
-    const accidental = match[2];
-    const octave = Number(match[3]);
+  /* =========================================================
+     VIRTUAL KEYBOARD
+     ========================================================= */
 
-    const semitones = {
+  function noteToFrequency(note) {
+    const match = /^([A-G])(#?)(-?\d+)$/.exec(note);
+
+    if (!match) {
+      return 440;
+    }
+
+    const noteNames = {
       C: 0,
       D: 2,
       E: 4,
@@ -1869,200 +2222,213 @@ document.addEventListener("DOMContentLoaded", () => {
       B: 11
     };
 
-    let midi =
-      (octave + 1) * 12 +
-      semitones[letter];
+    const letter = match[1];
+    const sharp = match[2] === "#" ? 1 : 0;
+    const octave = Number(match[3]);
 
-    if (accidental === "#") midi += 1;
-    if (accidental === "b") midi -= 1;
+    const midi =
+      (octave + 1) * 12 +
+      noteNames[letter] +
+      sharp;
 
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  function createKeyboardVoice(frequency, velocity = 0.8) {
-    if (!audioContext || !keyboardDestination) return null;
+  async function startKeyboardNote(note, record = true) {
+    try {
+      await ensureAudioContext();
+      setupEffectsGraph();
 
-    const oscillator = audioContext.createOscillator();
-    const envelope = audioContext.createGain();
+      const frequency = noteToFrequency(note);
 
-    oscillator.type = "triangle";
-    oscillator.frequency.value = frequency;
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      const filter = audioContext.createBiquadFilter();
 
-    const now = audioContext.currentTime;
-    const level = clamp(velocity, 0, 1) * keyboardVolume;
+      oscillator.type = "triangle";
+      oscillator.frequency.value = frequency;
 
-    envelope.gain.setValueAtTime(0.0001, now);
+      filter.type = "lowpass";
+      filter.frequency.value = 8000;
 
-    envelope.gain.exponentialRampToValueAtTime(
-      Math.max(0.0002, level),
-      now + 0.025
-    );
+      const volume = clamp(
+        readControl(keyboardVolume, 0.3),
+        0,
+        1
+      );
 
-    oscillator.connect(envelope);
-    envelope.connect(keyboardDestination);
+      gainNode.gain.value = 0;
 
-    oscillator.start(now);
+      oscillator.connect(filter);
+      filter.connect(gainNode);
 
-    return {
-      oscillator,
-      envelope,
-      startTime: now,
-      velocity: clamp(velocity, 0, 1)
-    };
-  }
+      gainNode.connect(audioGraph.masterInput);
 
-  function startKeyboardNote(note, velocity = 0.8) {
-    ensureAudioContext().then(() => {
-      const frequency = getNoteFrequency(note);
+      const now = audioContext.currentTime;
 
-      if (!frequency) {
-        notify("Keyboard note hin beekamne.");
-        return;
-      }
+      gainNode.gain.setValueAtTime(0, now);
 
-      const key = String(note);
+      gainNode.gain.linearRampToValueAtTime(
+        Math.max(0.0001, volume * 0.18),
+        now + 0.02
+      );
 
-      if (keyboardActiveNotes.has(key)) return;
+      oscillator.start(now);
 
-      const voice = createKeyboardVoice(frequency, velocity);
+      const voice = {
+        note,
+        oscillator,
+        gainNode,
+        startedAt: now,
+        stopped: false
+      };
 
-      if (!voice) return;
+      keyboardVoices.add(voice);
 
-      keyboardActiveNotes.set(key, voice);
+      keyboardActiveNotes.set(note, voice);
 
-      if (keyboardRecording) {
+      if (record && keyboardRecording) {
         keyboardEvents.push({
-          note: key,
-          frequency,
-          start: Math.max(
+          note,
+          type: "on",
+          time: Math.max(
             0,
-            audioContext.currentTime - keyboardRecordingStart
-          ),
-          end: null,
-          velocity: voice.velocity
+            audioContext.currentTime -
+              keyboardRecordingStart
+          )
         });
       }
 
-      highlightKeyboardKey(key, true);
-    }).catch((error) => {
-      console.error(error);
-    });
+      highlightKeyboardKey(note, true);
+
+      return voice;
+
+    } catch (error) {
+      console.error(
+        "Keyboard note failed:",
+        error
+      );
+
+      showToast("Could not play keyboard note.");
+
+      return null;
+    }
   }
 
-  function stopKeyboardNote(note) {
-    const key = String(note);
-    const voice = keyboardActiveNotes.get(key);
+  function stopKeyboardNote(note, record = true) {
+    const voice = keyboardActiveNotes.get(note);
 
-    if (!voice || !audioContext) return;
+    if (!voice || !audioContext) {
+      return;
+    }
 
     const now = audioContext.currentTime;
 
-    voice.envelope.gain.cancelScheduledValues(now);
-
-    voice.envelope.gain.setTargetAtTime(
-      0.0001,
-      now,
-      0.04
-    );
-
     try {
+      voice.gainNode.gain.cancelScheduledValues(now);
+
+      voice.gainNode.gain.setTargetAtTime(
+        0,
+        now,
+        0.04
+      );
+
       voice.oscillator.stop(now + 0.2);
-    } catch (_) {
-      // Oscillator may already have stopped.
+
+      voice.oscillator.addEventListener(
+        "ended",
+        () => {
+          try {
+            voice.oscillator.disconnect();
+            voice.gainNode.disconnect();
+          } catch (_) {}
+
+          keyboardVoices.delete(voice);
+        },
+        { once: true }
+      );
+
+    } catch (_) {}
+
+    voice.stopped = true;
+
+    keyboardActiveNotes.delete(note);
+
+    if (record && keyboardRecording) {
+      keyboardEvents.push({
+        note,
+        type: "off",
+        time: Math.max(
+          0,
+          audioContext.currentTime -
+            keyboardRecordingStart
+        )
+      });
     }
 
-    keyboardActiveNotes.delete(key);
+    highlightKeyboardKey(note, false);
+  }
 
-    if (keyboardRecording) {
-      const event = [...keyboardEvents]
-        .reverse()
-        .find(
-          (item) =>
-            item.note === key &&
-            item.end === null
-        );
-
-      if (event) {
-        event.end = Math.max(
-          event.start + 0.05,
-          now - keyboardRecordingStart
-        );
-      }
-    }
-
-    highlightKeyboardKey(key, false);
+  function stopKeyboardVoices() {
+    Array.from(keyboardActiveNotes.keys()).forEach(
+      (note) => stopKeyboardNote(note, false)
+    );
   }
 
   function highlightKeyboardKey(note, active) {
-    const selectors = [
-      `[data-note="${CSS.escape(String(note))}"]`,
-      `[data-key="${CSS.escape(String(note))}"]`
-    ];
+    if (!pianoKeyboard) {
+      return;
+    }
 
-    selectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((element) => {
-        element.classList.toggle("active", active);
-        element.classList.toggle("pressed", active);
-      });
-    });
-  }
-
-  function getKeyNote(element) {
-    return (
-      element.dataset.note ||
-      element.dataset.key ||
-      element.dataset.pitch ||
-      null
+    const key = pianoKeyboard.querySelector(
+      '[data-note="' + note + '"]'
     );
+
+    if (key) {
+      key.classList.toggle("active", active);
+    }
   }
 
-  function bindVirtualKeyboard() {
-    const keySelector = [
-      "[data-note]",
-      "[data-frequency]",
-      ".piano-key",
-      ".keyboard-key",
-      ".key"
-    ].join(",");
+  if (pianoKeyboard) {
+    const keys = pianoKeyboard.querySelectorAll(
+      "[data-note]"
+    );
 
-    document.querySelectorAll(keySelector).forEach((element) => {
-      if (element.dataset.naolKeyboardBound === "1") {
-        return;
-      }
+    keys.forEach((key) => {
+      const note = key.dataset.note;
 
-      element.dataset.naolKeyboardBound = "1";
-
-      const note =
-        getKeyNote(element) ||
-        element.dataset.frequency;
-
-      const start = (event) => {
+      key.addEventListener("pointerdown", async (event) => {
         event.preventDefault();
 
-        const frequency = element.dataset.frequency;
+        if (keyboardActiveNotes.has(note)) {
+          return;
+        }
 
-        startKeyboardNote(
-          frequency ? Number(frequency) : note
-        );
-      };
+        await startKeyboardNote(note);
+      });
 
-      const stop = (event) => {
-        event.preventDefault();
+      const release = (event) => {
+        if (event) {
+          event.preventDefault();
+        }
 
         stopKeyboardNote(note);
       };
 
-      element.addEventListener("pointerdown", start);
-      element.addEventListener("pointerup", stop);
-      element.addEventListener("pointerleave", stop);
-      element.addEventListener("pointercancel", stop);
+      key.addEventListener("pointerup", release);
+      key.addEventListener("pointerleave", (event) => {
+        if (event.buttons) {
+          release(event);
+        }
+      });
+
+      key.addEventListener("pointercancel", release);
     });
   }
 
-  /*
-   * Optional computer-keyboard mapping.
-   * A, W, S, E, D, F, T, G, Y, H, U, J play C4-B4.
-   */
+  /* =========================================================
+     COMPUTER KEYBOARD NOTES
+     ========================================================= */
 
   const computerKeyMap = {
     a: "C4",
@@ -2080,18 +2446,9 @@ document.addEventListener("DOMContentLoaded", () => {
     k: "C5"
   };
 
-  const computerKeysDown = new Set();
+  const computerActiveKeys = new Set();
 
-  document.addEventListener("keydown", (event) => {
-    if (
-      event.repeat ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.altKey
-    ) {
-      return;
-    }
-
+  document.addEventListener("keydown", async (event) => {
     const target = event.target;
 
     if (
@@ -2106,190 +2463,518 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    const note = computerKeyMap[event.key.toLowerCase()];
+    const key = event.key.toLowerCase();
+    const note = computerKeyMap[key];
 
-    if (!note || computerKeysDown.has(event.key.toLowerCase())) {
+    if (!note || event.repeat) {
       return;
     }
 
-    computerKeysDown.add(event.key.toLowerCase());
-    startKeyboardNote(note);
+    event.preventDefault();
+
+    computerActiveKeys.add(key);
+
+    await startKeyboardNote(note);
   });
 
   document.addEventListener("keyup", (event) => {
     const key = event.key.toLowerCase();
     const note = computerKeyMap[key];
 
-    if (!note) return;
+    if (!note) {
+      return;
+    }
 
-    computerKeysDown.delete(key);
+    computerActiveKeys.delete(key);
+
     stopKeyboardNote(note);
   });
 
   window.addEventListener("blur", () => {
-    Array.from(computerKeysDown).forEach((key) => {
+    Array.from(computerActiveKeys).forEach((key) => {
       const note = computerKeyMap[key];
 
-      if (note) stopKeyboardNote(note);
+      if (note) {
+        stopKeyboardNote(note);
+      }
     });
 
-    computerKeysDown.clear();
+    computerActiveKeys.clear();
   });
 
-  /* =======================================================
-     KEYBOARD RECORDING
-  ======================================================= */
+  /* =========================================================
+     KEYBOARD PERFORMANCE RECORDING
+     ========================================================= */
 
   function startKeyboardRecording() {
-    ensureAudioContext().then(() => {
-      if (keyboardRecording) {
-        notify("Keyboard recording duraan jalqabameera.");
-        return;
-      }
+    keyboardEvents = [];
+    keyboardRecordingStart =
+      audioContext ? audioContext.currentTime : 0;
 
-      keyboardEvents = [];
-      keyboardRecording = true;
-      keyboardRecordingStart = audioContext.currentTime;
+    keyboardRecording = true;
 
-      setText("keyboardRecordStatus", "Recording keyboard...");
-      setText("recordStatus", "Keyboard recording...");
+    if (recordKeyboardBtn) {
+      recordKeyboardBtn.textContent =
+        "■ Stop Keyboard Recording";
 
-      setStatus("Keyboard recording");
+      recordKeyboardBtn.classList.add("recording");
+    }
 
-      notify(
-        "Keyboard recording jalqabame. Keys taphadhu; yeroo xumurtu Stop cuqaasi."
-      );
-    }).catch((error) => {
-      console.error(error);
-      notify("Keyboard recording jalqabuu hin dandeenye.");
-    });
+    showToast(
+      "Keyboard recording started. Play some notes."
+    );
+
+    setStatus("Recording keyboard performance...");
   }
 
   function stopKeyboardRecording() {
-    if (!keyboardRecording) {
-      notify("Keyboard recording hin jalqabamne.");
+    keyboardRecording = false;
+
+    if (recordKeyboardBtn) {
+      recordKeyboardBtn.textContent =
+        "● Record Keyboard";
+
+      recordKeyboardBtn.classList.remove("recording");
+    }
+
+    if (keyboardEvents.length === 0) {
+      showToast("No keyboard notes were recorded.");
+
+      setStatus("Keyboard recording stopped.");
+
       return;
     }
 
-    if (audioContext) {
-      const now = audioContext.currentTime;
+    showToast(
+      keyboardEvents.length +
+        " keyboard events recorded. They will play with the mix."
+    );
 
-      keyboardEvents.forEach((event) => {
-        if (event.end === null) {
-          event.end = Math.max(
-            event.start + 0.05,
-            now - keyboardRecordingStart
-          );
+    setStatus("Keyboard performance saved in memory.");
+  }
+
+  if (recordKeyboardBtn) {
+    recordKeyboardBtn.addEventListener("click", async () => {
+      try {
+        await ensureAudioContext();
+
+        if (!keyboardRecording) {
+          startKeyboardRecording();
+        } else {
+          stopKeyboardRecording();
         }
-      });
+
+      } catch (error) {
+        showToast(
+          error.message || "Keyboard recording could not start."
+        );
+      }
+    });
+  }
+
+  function scheduleKeyboardEvents(startPosition = 0) {
+    if (
+      !audioContext ||
+      !audioGraph ||
+      keyboardEvents.length === 0
+    ) {
+      return;
     }
 
-    keyboardRecording = false;
+    const events = keyboardEvents
+      .filter((event) => event.time >= startPosition)
+      .slice()
+      .sort((a, b) => a.time - b.time);
 
-    setText(
-      "keyboardRecordStatus",
-      "Keyboard recorded: " + keyboardEvents.length + " notes"
-    );
-
-    setText(
-      "recordStatus",
-      "Keyboard recorded: " + keyboardEvents.length + " notes"
-    );
-
-    setStatus("Keyboard recording complete");
-
-    notify(
-      "Keyboard performance galmaa'eera. WAV export gochuun audio mix keessatti dabali."
-    );
-  }
-
-  bind("recordKeyboardBtn", "click", startKeyboardRecording);
-  bind("keyboardRecordBtn", "click", startKeyboardRecording);
-  bind("startKeyboardRecordBtn", "click", startKeyboardRecording);
-
-  bind("stopKeyboardRecordBtn", "click", stopKeyboardRecording);
-  bind("stopKeyboardBtn", "click", stopKeyboardRecording);
-  bind("stopKeyboardRecordingBtn", "click", stopKeyboardRecording);
-
-  /* =======================================================
-     KEYBOARD PERFORMANCE PLAYBACK
-  ======================================================= */
-
-  function stopKeyboardPlayback() {
-    keyboardPlaybackTimers.forEach((timer) => {
-      clearTimeout(timer);
-    });
-
-    keyboardPlaybackTimers = [];
-
-    keyboardActiveNotes.forEach((voice, note) => {
-      stopKeyboardNote(note);
-    });
-  }
-
-  function scheduleKeyboardPlayback(position = 0) {
-    stopKeyboardPlayback();
-
-    if (!keyboardEvents.length || !audioContext) return;
-
-    const speed = clamp(
-      getNumber("speedControl", 1),
-      0.25,
-      2
-    );
-
-    const events = keyboardEvents.slice();
+    const activeNotes = new Map();
 
     events.forEach((event) => {
-      const start = Math.max(0, event.start || 0);
-      const end = Math.max(
-        start + 0.05,
-        event.end === null ? start + 0.3 : event.end
-      );
+      const delay =
+        Math.max(0, event.time - startPosition);
 
-      if (end <= position) return;
+      const scheduledTime =
+        audioContext.currentTime + delay;
 
-      const adjustedStart = Math.max(
-        0,
-        (start - position) / speed
-      );
+      if (event.type === "on") {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
 
-      const adjustedEnd = Math.max(
-        adjustedStart + 0.05,
-        (end - position) / speed
-      );
+        oscillator.type = "triangle";
+        oscillator.frequency.value =
+          noteToFrequency(event.note);
 
-      const startTimer = setTimeout(() => {
-        if (!isPlaying) return;
+        gainNode.gain.value = 0.0001;
 
-        startKeyboardNote(
-          event.frequency || event.note,
-          event.velocity || 0.8
+        oscillator.connect(gainNode);
+        gainNode.connect(audioGraph.masterInput);
+
+        gainNode.gain.setValueAtTime(
+          0.0001,
+          scheduledTime
         );
-      }, adjustedStart * 1000);
 
-      const endTimer = setTimeout(() => {
-        stopKeyboardNote(event.note);
-      }, adjustedEnd * 1000);
+        gainNode.gain.linearRampToValueAtTime(
+          Math.max(
+            0.0001,
+            readControl(keyboardVolume, 0.3) * 0.18
+          ),
+          scheduledTime + 0.02
+        );
 
-      keyboardPlaybackTimers.push(startTimer, endTimer);
+        oscillator.start(scheduledTime);
+
+        activeNotes.set(event.note, {
+          oscillator,
+          gainNode
+        });
+
+      } else if (event.type === "off") {
+        const voice = activeNotes.get(event.note);
+
+        if (voice) {
+          try {
+            voice.gainNode.gain.setTargetAtTime(
+              0,
+              scheduledTime,
+              0.03
+            );
+
+            voice.oscillator.stop(scheduledTime + 0.15);
+
+            voice.oscillator.addEventListener(
+              "ended",
+              () => {
+                try {
+                  voice.oscillator.disconnect();
+                  voice.gainNode.disconnect();
+                } catch (_) {}
+              },
+              { once: true }
+            );
+
+          } catch (_) {}
+
+          activeNotes.delete(event.note);
+        }
+      }
+    });
+
+    /*
+     * Notes still held at the end are released after a short
+     * safety period to avoid stuck oscillator sounds.
+     */
+
+    activeNotes.forEach((voice) => {
+      const releaseTime =
+        audioContext.currentTime +
+        Math.max(0.1, getTrackDuration() - startPosition);
+
+      try {
+        voice.gainNode.gain.setTargetAtTime(
+          0,
+          releaseTime,
+          0.04
+        );
+
+        voice.oscillator.stop(releaseTime + 0.2);
+      } catch (_) {}
     });
   }
 
-  /* =======================================================
-     WAV ENCODING
-  ======================================================= */
+  /* =========================================================
+     AUTO MIX
+     ========================================================= */
+
+  function autoMix() {
+    if (tracks.length === 0) {
+      showToast("Upload audio tracks before using Auto Mix.");
+      return;
+    }
+
+    const usableTracks = tracks.filter(
+      (track) => !track.removed && track.buffer
+    );
+
+    if (usableTracks.length === 0) {
+      showToast("No usable audio tracks found.");
+      return;
+    }
+
+    usableTracks.forEach((track) => {
+      const buffer = track.buffer;
+
+      let sumSquares = 0;
+      let count = 0;
+
+      /*
+       * Sample a maximum of approximately 20,000 points
+       * from the first channel for a quick loudness estimate.
+       */
+
+      const data = buffer.getChannelData(0);
+
+      const stride = Math.max(
+        1,
+        Math.floor(data.length / 20000)
+      );
+
+      for (let i = 0; i < data.length; i += stride) {
+        const value = data[i] || 0;
+
+        sumSquares += value * value;
+        count++;
+      }
+
+      const rms = Math.sqrt(
+        sumSquares / Math.max(1, count)
+      );
+
+      /*
+       * Balance tracks without applying extreme gain boosts.
+       */
+
+      const suggestedVolume =
+        rms > 0.0001
+          ? clamp(0.18 / rms, 0.15, 1.5)
+          : 0.5;
+
+      track.volume = Math.min(
+        1,
+        suggestedVolume
+      );
+
+      track.pan = 0;
+    });
+
+    /*
+     * A moderate mastering preset helps keep peaks controlled.
+     */
+
+    if (masterVolume) {
+      masterVolume.value = "0.75";
+    }
+
+    if (compressorControl) {
+      compressorControl.value = "0.4";
+    }
+
+    if (limiterControl) {
+      limiterControl.value = "0.65";
+    }
+
+    if (bassControl) {
+      bassControl.value = "0";
+    }
+
+    if (midControl) {
+      midControl.value = "0";
+    }
+
+    if (trebleControl) {
+      trebleControl.value = "0";
+    }
+
+    updateMasterControls();
+    updateEffects();
+    renderTracks();
+
+    showToast(
+      "Auto Mix applied. Review the result before exporting."
+    );
+
+    setStatus("Automatic mix balancing completed.");
+  }
+
+  /*
+   * Create an Auto Mix button if the HTML does not already
+   * contain one. This allows the feature to be used without
+   * changing the existing index.html.
+   */
+
+  function installAutoMixButton() {
+    const existing = $("autoMixBtn");
+
+    if (existing) {
+      existing.addEventListener("click", autoMix);
+      return;
+    }
+
+    const button = createButton(
+      "✨ Auto Mix",
+      "btn secondary"
+    );
+
+    button.id = "autoMixBtn";
+
+    const mixerPanel = document.querySelector(
+      ".mixer-panel .section-heading"
+    );
+
+    if (mixerPanel) {
+      mixerPanel.appendChild(button);
+    }
+
+    button.addEventListener("click", autoMix);
+  }
+
+  installAutoMixButton();
+
+  /* =========================================================
+     PROJECT SETTINGS SAVE
+     ========================================================= */
+
+  function collectProjectSettings() {
+    return {
+      application: "Naol Music Studio",
+      version: "1.0",
+      savedAt: new Date().toISOString(),
+
+      master: {
+        volume: readControl(masterVolume, 0.8),
+        pan: readControl(panControl, 0)
+      },
+
+      equalizer: {
+        bass: readControl(bassControl, 0),
+        mid: readControl(midControl, 0),
+        treble: readControl(trebleControl, 0)
+      },
+
+      effects: {
+        reverb: readControl(reverbControl, 0),
+        delay: readControl(delayControl, 0),
+        compressor: readControl(compressorControl, 0.25),
+        noiseGate: readControl(noiseGateControl, 0),
+        chorus: readControl(chorusControl, 0),
+        limiter: readControl(limiterControl, 0.5)
+      },
+
+      vocal: {
+        pitch: readControl(pitchControl, 0),
+        speed: readControl(speedControl, 1),
+        fadeIn: readControl(fadeInControl, 0),
+        fadeOut: readControl(fadeOutControl, 0)
+      },
+
+      keyboard: {
+        volume: readControl(keyboardVolume, 0.3),
+        events: keyboardEvents
+      },
+
+      tracks: tracks.map((track) => ({
+        name: track.name,
+        volume: track.volume,
+        pan: track.pan,
+        muted: track.muted,
+        solo: track.solo,
+        speed: track.speed,
+        fadeIn: track.fadeIn,
+        fadeOut: track.fadeOut,
+        duration: track.buffer.duration
+      }))
+    };
+  }
+
+  function saveProject() {
+    const project = collectProjectSettings();
+
+    const blob = new Blob(
+      [JSON.stringify(project, null, 2)],
+      { type: "application/json" }
+    );
+
+    downloadBlob(
+      blob,
+      "naol-music-studio-project.json"
+    );
+
+    showToast(
+      "Project settings downloaded. Keep your original audio files too."
+    );
+  }
+
+  if (saveProjectBtn) {
+    saveProjectBtn.addEventListener(
+      "click",
+      saveProject
+    );
+  }
+
+  /* =========================================================
+     LIVE MASTER METER
+     ========================================================= */
+
+  function startMeter() {
+    if (!audioGraph || !masterMeter) {
+      return;
+    }
+
+    if (meterAnimationFrame) {
+      cancelAnimationFrame(meterAnimationFrame);
+    }
+
+    const analyser = audioGraph.analyser;
+
+    const data = new Uint8Array(
+      analyser.frequencyBinCount
+    );
+
+    function drawMeter() {
+      if (!audioGraph || !masterMeter) {
+        return;
+      }
+
+      analyser.getByteTimeDomainData(data);
+
+      let sum = 0;
+
+      for (let i = 0; i < data.length; i++) {
+        const value = (data[i] - 128) / 128;
+
+        sum += value * value;
+      }
+
+      const rms = Math.sqrt(
+        sum / Math.max(1, data.length)
+      );
+
+      const level = clamp(
+        rms * 220,
+        0,
+        100
+      );
+
+      masterMeter.style.height =
+        level + "%";
+
+      meterAnimationFrame =
+        requestAnimationFrame(drawMeter);
+    }
+
+    drawMeter();
+  }
+
+  /* =========================================================
+     WAV ENCODER
+     ========================================================= */
 
   function audioBufferToWav(buffer) {
-    const channels = buffer.numberOfChannels;
+    const numberOfChannels = buffer.numberOfChannels;
     const sampleRate = buffer.sampleRate;
-    const frames = buffer.length;
+    const numberOfFrames = buffer.length;
 
     const bytesPerSample = 2;
-    const blockAlign = channels * bytesPerSample;
-    const dataSize = frames * blockAlign;
 
-    const arrayBuffer = new ArrayBuffer(44 + dataSize);
+    const blockAlign =
+      numberOfChannels * bytesPerSample;
+
+    const dataSize =
+      numberOfFrames * blockAlign;
+
+    const arrayBuffer = new ArrayBuffer(
+      44 + dataSize
+    );
+
     const view = new DataView(arrayBuffer);
 
     function writeString(offset, text) {
@@ -2299,38 +2984,88 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     writeString(0, "RIFF");
-    view.setUint32(4, 36 + dataSize, true);
+
+    view.setUint32(
+      4,
+      36 + dataSize,
+      true
+    );
+
     writeString(8, "WAVE");
     writeString(12, "fmt ");
+
     view.setUint32(16, 16, true);
     view.setUint16(20, 1, true);
-    view.setUint16(22, channels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
+
+    view.setUint16(
+      22,
+      numberOfChannels,
+      true
+    );
+
+    view.setUint32(
+      24,
+      sampleRate,
+      true
+    );
+
+    view.setUint32(
+      28,
+      sampleRate * blockAlign,
+      true
+    );
+
+    view.setUint16(
+      32,
+      blockAlign,
+      true
+    );
+
+    view.setUint16(
+      34,
+      16,
+      true
+    );
+
     writeString(36, "data");
-    view.setUint32(40, dataSize, true);
 
-    const channelData = [];
+    view.setUint32(
+      40,
+      dataSize,
+      true
+    );
 
-    for (let channel = 0; channel < channels; channel++) {
-      channelData.push(buffer.getChannelData(channel));
+    const channels = [];
+
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      channels.push(
+        buffer.getChannelData(channel)
+      );
     }
 
     let offset = 44;
 
-    for (let i = 0; i < frames; i++) {
-      for (let channel = 0; channel < channels; channel++) {
-        let sample = channelData[channel][i];
+    for (let frame = 0; frame < numberOfFrames; frame++) {
+      for (
+        let channel = 0;
+        channel < numberOfChannels;
+        channel++
+      ) {
+        let sample = channels[channel][frame] || 0;
 
         sample = clamp(sample, -1, 1);
 
-        const intSample = sample < 0
-          ? sample * 32768
-          : sample * 32767;
+        const pcmValue =
+          sample < 0
+            ? sample * 32768
+            : sample * 32767;
 
-        view.setInt16(offset, intSample, true);
+        view.setInt16(
+          offset,
+          pcmValue,
+          true
+        );
+
         offset += 2;
       }
     }
@@ -2341,705 +3076,603 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
-  /* =======================================================
+  /* =========================================================
      OFFLINE MIX RENDERING
-  ======================================================= */
+     ========================================================= */
 
-  async function renderMixToWavBuffer() {
-    if (renderInProgress) {
-      throw new Error("Mix render is already running.");
+  async function renderOfflineMix() {
+    const activeTracks = tracks.filter(
+      (track) => !track.removed && track.buffer
+    );
+
+    if (activeTracks.length === 0) {
+      throw new Error("Upload audio tracks before exporting.");
     }
 
-    renderInProgress = true;
+    const totalDuration = Math.max(
+      getTrackDuration(),
+      keyboardEvents.length
+        ? Math.max(
+            ...keyboardEvents.map((event) => event.time)
+          ) + 1
+        : 0
+    );
 
-    try {
-      const sampleRate = audioContext
-        ? audioContext.sampleRate
-        : 44100;
+    if (totalDuration <= 0) {
+      throw new Error("The mix has no audio duration.");
+    }
+
+    /*
+     * Limit excessively long offline renders to avoid exhausting
+     * mobile browser memory.
+     */
+
+    if (totalDuration > 1800) {
+      throw new Error(
+        "This mix is longer than 30 minutes. Export shorter sections on this device."
+      );
+    }
+
+    const sampleRate =
+      audioContext ? audioContext.sampleRate : 44100;
+
+    const frameCount =
+      Math.ceil(totalDuration * sampleRate);
+
+    const offlineContext = new OfflineAudioContext(
+      2,
+      frameCount,
+      sampleRate
+    );
+
+    const input = offlineContext.createGain();
+
+    const bass = offlineContext.createBiquadFilter();
+    const mid = offlineContext.createBiquadFilter();
+    const treble = offlineContext.createBiquadFilter();
+
+    const compressor =
+      offlineContext.createDynamicsCompressor();
+
+    const limiter =
+      offlineContext.createDynamicsCompressor();
+
+    const master =
+      offlineContext.createGain();
+
+    const panner =
+      offlineContext.createStereoPanner();
+
+    bass.type = "lowshelf";
+    bass.frequency.value = 180;
+    bass.gain.value = readControl(bassControl, 0);
+
+    mid.type = "peaking";
+    mid.frequency.value = 1000;
+    mid.Q.value = 0.8;
+    mid.gain.value = readControl(midControl, 0);
+
+    treble.type = "highshelf";
+    treble.frequency.value = 5000;
+    treble.gain.value = readControl(trebleControl, 0);
+
+    const compressionAmount = readControl(
+      compressorControl,
+      0.25
+    );
+
+    compressor.threshold.value =
+      -12 - compressionAmount * 18;
+
+    compressor.knee.value = 24;
+
+    compressor.ratio.value =
+      1 + compressionAmount * 7;
+
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+
+    const limiterAmount = readControl(
+      limiterControl,
+      0.5
+    );
+
+    limiter.threshold.value =
+      -1 - limiterAmount * 8;
+
+    limiter.knee.value = 0;
+
+    limiter.ratio.value =
+      4 + limiterAmount * 16;
+
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.08;
+
+    master.gain.value =
+      readControl(masterVolume, 0.8);
+
+    panner.pan.value =
+      readControl(panControl, 0);
+
+    input.connect(bass);
+    bass.connect(mid);
+    mid.connect(treble);
+    treble.connect(compressor);
+    compressor.connect(limiter);
+    limiter.connect(master);
+    master.connect(panner);
+    panner.connect(offlineContext.destination);
+
+    const anySolo = activeTracks.some(
+      (track) => track.solo
+    );
+
+    activeTracks.forEach((track) => {
+      if (track.muted || (anySolo && !track.solo)) {
+        return;
+      }
+
+      const source =
+        offlineContext.createBufferSource();
+
+      const gain =
+        offlineContext.createGain();
+
+      const trackPan =
+        offlineContext.createStereoPanner();
+
+      source.buffer = track.buffer;
 
       const speed = clamp(
-        getNumber("speedControl", 1),
-        0.25,
-        2
+        track.speed || 1,
+        0.5,
+        1.5
       );
 
-      const duration = getMasterDuration();
+      source.playbackRate.value = speed;
 
-      if (duration <= 0) {
-        throw new Error("No audio available to render.");
-      }
+      trackPan.pan.value = track.pan;
 
-      const outputDuration = duration / speed + 2;
+      const effectiveVolume =
+        clamp(track.volume, 0, 1);
 
-      if (outputDuration > 600) {
-        throw new Error(
-          "Mix is longer than 10 minutes. Export a shorter mix."
-        );
-      }
+      gain.gain.value = effectiveVolume;
 
-      const frameCount = Math.ceil(
-        outputDuration * sampleRate
-      );
-
-      const offline = new OfflineAudioContext(
-        2,
-        frameCount,
-        sampleRate
-      );
-
-      const input = offline.createGain();
-
-      const low = offline.createBiquadFilter();
-      low.type = "lowshelf";
-      low.frequency.value = 150;
-      low.gain.value = getNumber("bassControl", 0);
-
-      const mid = offline.createBiquadFilter();
-      mid.type = "peaking";
-      mid.frequency.value = 1000;
-      mid.Q.value = 0.8;
-      mid.gain.value = getNumber("midControl", 0);
-
-      const high = offline.createBiquadFilter();
-      high.type = "highshelf";
-      high.frequency.value = 6500;
-      high.gain.value = getNumber("trebleControl", 0);
-
-      const pan = offline.createStereoPanner();
-      pan.pan.value = clamp(
-        getNumber("panControl", 0),
-        -1,
-        1
-      );
-
-      const compressor = offline.createDynamicsCompressor();
-
-      const compression = clamp(
-        getNumber("compressorControl", 0.4),
+      const fadeIn = clamp(
+        track.fadeIn || 0,
         0,
-        1
+        10
       );
 
-      compressor.threshold.value = -8 - compression * 22;
-      compressor.ratio.value = 1 + compression * 8;
-
-      const limiter = offline.createDynamicsCompressor();
-
-      const limiterAmount = clamp(
-        getNumber("limiterControl", 0.5),
+      const fadeOut = clamp(
+        track.fadeOut || 0,
         0,
-        1
+        10
       );
 
-      limiter.threshold.value = -1 - limiterAmount * 7;
-      limiter.ratio.value = 4 + limiterAmount * 16;
+      const playbackDuration =
+        track.buffer.duration / speed;
 
-      const master = offline.createGain();
-      master.gain.value = clamp(
-        getNumber("masterVolume", 0.8),
-        0,
-        1
-      );
-
-      input.connect(low);
-      low.connect(mid);
-      mid.connect(high);
-      high.connect(pan);
-      pan.connect(compressor);
-      compressor.connect(limiter);
-      limiter.connect(master);
-      master.connect(offline.destination);
-
-      const fadeIn = Math.max(
-        0,
-        getNumber("fadeInControl", 0)
-      );
-
-      const fadeOut = Math.max(
-        0,
-        getNumber("fadeOutControl", 0)
-      );
-
-      const hasSolo = tracks.some((track) => track.solo);
-
-      tracks.forEach((track) => {
-        if (track.muted || (hasSolo && !track.solo)) {
-          return;
-        }
-
-        const source = offline.createBufferSource();
-        source.buffer = track.buffer;
-
-        source.playbackRate.value = speed;
-
-        const pitch = clamp(
-          getNumber("pitchControl", 0),
-          -12,
-          12
-        );
-
-        source.detune.value = pitch * 100;
-
-        const gain = offline.createGain();
-        const trackPan = offline.createStereoPanner();
-
-        gain.gain.value = clamp(
-          track.volume,
+      if (fadeIn > 0) {
+        gain.gain.setValueAtTime(
           0,
-          1
+          0
         );
 
-        trackPan.pan.value = clamp(track.pan, -1, 1);
+        gain.gain.linearRampToValueAtTime(
+          effectiveVolume,
+          Math.min(fadeIn, playbackDuration)
+        );
+      }
 
-        if (fadeIn > 0) {
-          gain.gain.setValueAtTime(
-            0,
-            0
-          );
-
-          gain.gain.linearRampToValueAtTime(
-            clamp(track.volume, 0, 1),
-            Math.min(fadeIn / speed, track.buffer.duration / speed)
-          );
-        }
-
-        if (fadeOut > 0) {
-          const fadeStart = Math.max(
-            0,
-            track.buffer.duration / speed - fadeOut / speed
-          );
-
-          gain.gain.setValueAtTime(
-            clamp(track.volume, 0, 1),
-            fadeStart
-          );
-
-          gain.gain.linearRampToValueAtTime(
-            0,
-            track.buffer.duration / speed
-          );
-        }
-
-        source.connect(gain);
-        gain.connect(trackPan);
-        trackPan.connect(input);
-
-        source.start(0);
-      });
-
-      /*
-       * Recreate keyboard performance with offline oscillators.
-       * This ensures recorded notes are included in the WAV.
-       */
-
-      keyboardEvents.forEach((event) => {
-        const start = Math.max(0, event.start || 0) / speed;
-
-        const end = Math.max(
-          (event.end === null ? (event.start || 0) + 0.3 : event.end) / speed,
-          start + 0.05
+      if (
+        fadeOut > 0 &&
+        playbackDuration > fadeOut
+      ) {
+        gain.gain.setValueAtTime(
+          effectiveVolume,
+          playbackDuration - fadeOut
         );
 
-        if (start >= outputDuration) return;
+        gain.gain.linearRampToValueAtTime(
+          0,
+          playbackDuration
+        );
+      }
 
-        const oscillator = offline.createOscillator();
-        const envelope = offline.createGain();
+      source.connect(gain);
+      gain.connect(trackPan);
+      trackPan.connect(input);
+
+      source.start(0);
+    });
+
+    /*
+     * Re-create keyboard notes in the offline render so recorded
+     * keyboard performances can be included in the exported mix.
+     */
+
+    const sortedEvents = keyboardEvents
+      .slice()
+      .sort((a, b) => a.time - b.time);
+
+    const offlineVoices = new Map();
+
+    sortedEvents.forEach((event) => {
+      const when = clamp(
+        event.time,
+        0,
+        totalDuration
+      );
+
+      if (event.type === "on") {
+        const oscillator =
+          offlineContext.createOscillator();
+
+        const gain =
+          offlineContext.createGain();
 
         oscillator.type = "triangle";
 
         oscillator.frequency.value =
-          event.frequency ||
-          getNoteFrequency(event.note) ||
-          440;
+          noteToFrequency(event.note);
 
-        const velocity = clamp(
-          event.velocity || 0.8,
-          0,
-          1
-        );
+        gain.gain.value = 0.0001;
 
-        const level = keyboardVolume * velocity;
+        oscillator.connect(gain);
+        gain.connect(input);
 
-        envelope.gain.setValueAtTime(
+        gain.gain.setValueAtTime(
           0.0001,
-          start
+          when
         );
 
-        envelope.gain.exponentialRampToValueAtTime(
-          Math.max(0.0002, level),
-          start + 0.025
+        gain.gain.linearRampToValueAtTime(
+          Math.max(
+            0.0001,
+            readControl(keyboardVolume, 0.3) * 0.18
+          ),
+          Math.min(totalDuration, when + 0.02)
         );
 
-        envelope.gain.setValueAtTime(
-          Math.max(0.0002, level),
-          end
-        );
+        oscillator.start(when);
 
-        envelope.gain.exponentialRampToValueAtTime(
-          0.0001,
-          end + 0.04
-        );
+        if (!offlineVoices.has(event.note)) {
+          offlineVoices.set(event.note, []);
+        }
 
-        oscillator.connect(envelope);
-        envelope.connect(input);
+        offlineVoices.get(event.note).push({
+          oscillator,
+          gain
+        });
 
-        oscillator.start(start);
-        oscillator.stop(end + 0.06);
+      } else if (event.type === "off") {
+        const voices =
+          offlineVoices.get(event.note);
+
+        const voice = voices && voices.shift();
+
+        if (voice) {
+          try {
+            voice.gain.gain.setTargetAtTime(
+              0,
+              when,
+              0.03
+            );
+
+            voice.oscillator.stop(
+              Math.min(totalDuration, when + 0.2)
+            );
+          } catch (_) {}
+        }
+      }
+    });
+
+    /*
+     * Release any keyboard notes that have no matching note-off.
+     */
+
+    offlineVoices.forEach((voices) => {
+      voices.forEach((voice) => {
+        try {
+          voice.gain.gain.setTargetAtTime(
+            0,
+            Math.max(0, totalDuration - 0.25),
+            0.04
+          );
+
+          voice.oscillator.stop(
+            Math.max(0.01, totalDuration - 0.02)
+          );
+        } catch (_) {}
       });
+    });
 
-      /*
-       * Basic offline reverb and delay.
-       */
+    return offlineContext.startRendering();
+  }
 
-      const reverbAmount = clamp(
-        getNumber("reverbControl", 0),
-        0,
-        1
+  /* =========================================================
+     EXPORT WAV
+     ========================================================= */
+
+  async function exportWav() {
+    const buttons = [
+      exportBtn,
+      masterExportBtn
+    ].filter(Boolean);
+
+    buttons.forEach((button) => {
+      button.disabled = true;
+      button.dataset.originalText =
+        button.textContent;
+
+      button.textContent = "Rendering...";
+    });
+
+    try {
+      await ensureAudioContext();
+
+      setStatus("Rendering WAV mix...");
+
+      showToast(
+        "Rendering your mix. Please wait."
       );
 
-      const delayAmount = clamp(
-        getNumber("delayControl", 0),
-        0,
-        1
+      const renderedBuffer =
+        await renderOfflineMix();
+
+      const wavBlob =
+        audioBufferToWav(renderedBuffer);
+
+      downloadBlob(
+        wavBlob,
+        "naol-music-studio-mix.wav"
       );
 
-      if (reverbAmount > 0) {
-        const convolver = offline.createConvolver();
+      setStatus("WAV export completed.");
 
-        convolver.buffer = createImpulseResponse(
-          offline,
-          2,
-          2
-        );
+      showToast(
+        "WAV file exported successfully."
+      );
 
-        const wet = offline.createGain();
-        wet.gain.value = reverbAmount * 0.25;
+    } catch (error) {
+      console.error("WAV export failed:", error);
 
-        master.connect(convolver);
-        convolver.connect(wet);
-        wet.connect(offline.destination);
-      }
+      setStatus("WAV export failed.");
 
-      if (delayAmount > 0) {
-        const delayNode = offline.createDelay(2);
-        delayNode.delayTime.value = 0.25;
+      showToast(
+        error.message ||
+          "Could not export WAV audio.",
+        6000
+      );
 
-        const wet = offline.createGain();
-        wet.gain.value = delayAmount * 0.2;
-
-        master.connect(delayNode);
-        delayNode.connect(wet);
-        wet.connect(offline.destination);
-      }
-
-      setStatus("Rendering WAV...");
-
-      return await offline.startRendering();
     } finally {
-      renderInProgress = false;
+      buttons.forEach((button) => {
+        button.disabled = false;
+
+        if (button.dataset.originalText) {
+          button.textContent =
+            button.dataset.originalText;
+        }
+      });
     }
   }
 
-  async function exportMixToWav() {
-    if (renderInProgress) {
-      notify("WAV render duraan adeemaa jira.");
+  /* =========================================================
+     EXPORT WEBM
+     ========================================================= */
+
+  async function exportWebM() {
+    if (!window.MediaRecorder) {
+      showToast(
+        "WebM export is not supported in this browser. Try WAV export."
+      );
+
       return;
     }
 
     try {
       await ensureAudioContext();
 
-      notify("WAV mix qopheessaa jira...");
+      const stream =
+        audioGraph.recordingDestination.stream;
 
-      const buffer = await renderMixToWavBuffer();
-      const blob = audioBufferToWav(buffer);
+      const mimeType = [
+        "audio/webm;codecs=opus",
+        "audio/webm"
+      ].find((type) =>
+        MediaRecorder.isTypeSupported(type)
+      );
 
-      downloadBlob(blob, "naol-music-studio-mix.wav");
+      if (!mimeType) {
+        showToast(
+          "This browser does not support WebM audio recording."
+        );
 
-      setStatus("WAV export complete");
-      notify("WAV mix guutuun buufameera.");
+        return;
+      }
+
+      const recorder = new MediaRecorder(
+        stream,
+        { mimeType }
+      );
+
+      const chunks = [];
+
+      recorder.addEventListener(
+        "dataavailable",
+        (event) => {
+          if (event.data && event.data.size > 0) {
+            chunks.push(event.data);
+          }
+        }
+      );
+
+      recorder.addEventListener(
+        "stop",
+        () => {
+          const blob = new Blob(chunks, {
+            type: mimeType
+          });
+
+          downloadBlob(
+            blob,
+            "naol-music-studio-mix.webm"
+          );
+
+          setStatus("WebM export completed.");
+
+          showToast(
+            "WebM recording downloaded."
+          );
+        },
+        { once: true }
+      );
+
+      const wasPlaying = isPlaying;
+      const oldPosition = getCurrentPosition();
+
+      if (!wasPlaying) {
+        await startPlayback(0);
+      }
+
+      recorder.start();
+
+      setStatus("Recording WebM mix...");
+
+      const duration =
+        getTrackDuration() * 1000 + 500;
+
+      setTimeout(() => {
+        if (recorder.state !== "inactive") {
+          recorder.stop();
+        }
+
+        if (!wasPlaying) {
+          stopPlayback();
+        } else {
+          startPlayback(oldPosition);
+        }
+      }, duration);
+
     } catch (error) {
-      console.error(error);
-      setStatus("WAV export failed");
+      console.error("WebM export failed:", error);
 
-      notify(
-        error.message || "WAV export gochuu hin dandeenye."
+      showToast(
+        error.message ||
+          "WebM export failed.",
+        5000
       );
     }
   }
 
-  async function exportSingleTrack(track) {
-    if (!track) return;
+  /* =========================================================
+     EXPORT BUTTONS
+     ========================================================= */
 
-    await ensureAudioContext();
+  async function exportSelectedFormat() {
+    const format =
+      exportFormat ? exportFormat.value : "wav";
 
-    const offline = new OfflineAudioContext(
-      track.buffer.numberOfChannels,
-      track.buffer.length,
-      track.buffer.sampleRate
-    );
-
-    const source = offline.createBufferSource();
-    source.buffer = track.buffer;
-
-    const gain = offline.createGain();
-    gain.gain.value = clamp(track.volume, 0, 1);
-
-    source.connect(gain);
-    gain.connect(offline.destination);
-
-    source.start();
-
-    const buffer = await offline.startRendering();
-    const blob = audioBufferToWav(buffer);
-
-    downloadBlob(
-      blob,
-      makeSafeFilename(track.name.replace(/\.[^.]+$/, "")) + ".wav"
-    );
-
-    notify("Track WAV buufameera.");
-  }
-
-  bind("exportWavBtn", "click", exportMixToWav);
-  bind("exportMixBtn", "click", exportMixToWav);
-  bind("downloadMixBtn", "click", exportMixToWav);
-
-  bind("exportBtn", "click", () => {
-    const format = exportFormat
-      ? exportFormat.value.toLowerCase()
-      : "wav";
-
-    if (format.includes("wav")) {
-      exportMixToWav();
-      return;
+    if (format === "webm") {
+      await exportWebM();
+    } else {
+      await exportWav();
     }
+  }
 
-    /*
-     * Browser-native MediaRecorder usually exports WebM/Opus,
-     * not MP3. Use WAV export when the requested format is WAV.
-     */
-
-    notify(
-      "MP3 export native browser irratti hin mirkanoofne. WAV filadhu."
-    );
-  });
-
-  /* =======================================================
-     PROJECT SAVE
-  ======================================================= */
-
-  function saveProject() {
-    const project = {
-      app: "Naol Music Studio",
-      version: 1,
-      savedAt: new Date().toISOString(),
-
-      master: {
-        volume: getNumber("masterVolume", 0.8),
-        pan: getNumber("panControl", 0),
-        bass: getNumber("bassControl", 0),
-        mid: getNumber("midControl", 0),
-        treble: getNumber("trebleControl", 0),
-
-        reverb: getNumber("reverbControl", 0),
-        delay: getNumber("delayControl", 0),
-        compressor: getNumber("compressorControl", 0.4),
-        chorus: getNumber("chorusControl", 0),
-        limiter: getNumber("limiterControl", 0.5),
-
-        noiseGate: getNumber("noiseGateControl", 0),
-        pitch: getNumber("pitchControl", 0),
-        speed: getNumber("speedControl", 1),
-
-        fadeIn: getNumber("fadeInControl", 0),
-        fadeOut: getNumber("fadeOutControl", 0)
-      },
-
-      tracks: tracks.map((track) => ({
-        id: track.id,
-        name: track.name,
-        volume: track.volume,
-        pan: track.pan,
-        muted: track.muted,
-        solo: track.solo,
-        duration: track.buffer.duration
-      })),
-
-      keyboardVolume,
-      keyboardEvents: keyboardEvents.map((event) => ({
-        ...event
-      }))
-    };
-
-    const blob = new Blob(
-      [JSON.stringify(project, null, 2)],
-      { type: "application/json" }
-    );
-
-    downloadBlob(blob, "naol-music-studio-project.json");
-
-    notify(
-      "Project settings fi keyboard notes save ta'eera. Audio files ofumaan project keessa hin dabalaman."
+  if (exportBtn) {
+    exportBtn.addEventListener(
+      "click",
+      exportSelectedFormat
     );
   }
 
-  bind("saveProjectBtn", "click", saveProject);
-  bind("saveBtn", "click", saveProject);
+  if (masterExportBtn) {
+    masterExportBtn.addEventListener(
+      "click",
+      exportSelectedFormat
+    );
+  }
 
-  /* =======================================================
-     PRESETS
-  ======================================================= */
+  /* =========================================================
+     SIDEBAR NAVIGATION
+     ========================================================= */
 
-  function applyPreset(name) {
-    const presets = {
-      clean: {
-        bass: 0,
-        mid: 0,
-        treble: 1,
-        reverb: 0,
-        delay: 0,
-        compressor: 0.25,
-        chorus: 0,
-        limiter: 0.4
-      },
+  const sectionMap = {
+    studio: $("studioSection"),
+    effects: $("effectsSection"),
+    vocal: $("vocalSection"),
+    keyboard: $("keyboardSection"),
+    mastering: $("masteringSection")
+  };
 
-      vocal: {
-        bass: -1,
-        mid: 2,
-        treble: 2,
-        reverb: 0.18,
-        delay: 0.08,
-        compressor: 0.55,
-        chorus: 0,
-        limiter: 0.6
-      },
+  const navItems = document.querySelectorAll(
+    ".nav-item[data-section]"
+  );
 
-      bass: {
-        bass: 4,
-        mid: 0,
-        treble: 1,
-        reverb: 0.05,
-        delay: 0,
-        compressor: 0.4,
-        chorus: 0,
-        limiter: 0.7
-      },
+  navItems.forEach((item) => {
+    item.addEventListener("click", () => {
+      const sectionName = item.dataset.section;
 
-      ambient: {
-        bass: 1,
-        mid: 0,
-        treble: 1,
-        reverb: 0.55,
-        delay: 0.35,
-        compressor: 0.2,
-        chorus: 0.25,
-        limiter: 0.45
-      },
+      const target = sectionMap[sectionName];
 
-      electronic: {
-        bass: 2,
-        mid: 0,
-        treble: 2,
-        reverb: 0.2,
-        delay: 0.25,
-        compressor: 0.55,
-        chorus: 0.15,
-        limiter: 0.7
+      if (!target) {
+        return;
       }
-    };
 
-    const preset = presets[name];
-
-    if (!preset) {
-      notify("Preset hin beekamne.");
-      return;
-    }
-
-    const values = {
-      bassControl: preset.bass,
-      midControl: preset.mid,
-      trebleControl: preset.treble,
-      reverbControl: preset.reverb,
-      delayControl: preset.delay,
-      compressorControl: preset.compressor,
-      chorusControl: preset.chorus,
-      limiterControl: preset.limiter
-    };
-
-    Object.entries(values).forEach(([id, value]) => {
-      const element = $(id);
-
-      if (element) {
-        element.value = String(value);
-      }
-    });
-
-    updateMasterControls();
-    updateEffectControls();
-
-    notify("Preset " + name + " hojii irra oole.");
-  }
-
-  bind("presetClean", "click", () => applyPreset("clean"));
-  bind("presetVocal", "click", () => applyPreset("vocal"));
-  bind("presetBass", "click", () => applyPreset("bass"));
-  bind("presetAmbient", "click", () => applyPreset("ambient"));
-  bind("presetElectronic", "click", () => applyPreset("electronic"));
-
-  bind("presetSelect", "change", (event) => {
-    applyPreset(event.target.value);
-  });
-
-  /* =======================================================
-     CONTROL LISTENERS
-  ======================================================= */
-
-  [
-    "masterVolume",
-    "panControl",
-    "bassControl",
-    "midControl",
-    "trebleControl"
-  ].forEach((id) => {
-    bind(id, "input", updateMasterControls);
-    bind(id, "change", updateMasterControls);
-  });
-
-  [
-    "reverbControl",
-    "delayControl",
-    "compressorControl",
-    "chorusControl",
-    "limiterControl",
-    "noiseGateControl"
-  ].forEach((id) => {
-    bind(id, "input", async () => {
-      try {
-        await ensureAudioContext();
-        updateEffectControls();
-      } catch (error) {
-        console.error(error);
-      }
-    });
-  });
-
-  bind("speedControl", "input", () => {
-    setText(
-      "speedValue",
-      getNumber("speedControl", 1).toFixed(2) + "x"
-    );
-  });
-
-  bind("pitchControl", "input", () => {
-    setText(
-      "pitchValue",
-      getNumber("pitchControl", 0).toFixed(1) + " semitones"
-    );
-  });
-
-  bind("fadeInControl", "input", () => {
-    setText(
-      "fadeInValue",
-      getNumber("fadeInControl", 0).toFixed(1) + " sec"
-    );
-  });
-
-  bind("fadeOutControl", "input", () => {
-    setText(
-      "fadeOutValue",
-      getNumber("fadeOutControl", 0).toFixed(1) + " sec"
-    );
-  });
-
-  /* =======================================================
-     LIVE LEVEL METER
-  ======================================================= */
-
-  function updateLevelMeter() {
-    if (!masterAnalyser) {
-      requestAnimationFrame(updateLevelMeter);
-      return;
-    }
-
-    const data = new Uint8Array(
-      masterAnalyser.frequencyBinCount
-    );
-
-    masterAnalyser.getByteTimeDomainData(data);
-
-    let sum = 0;
-
-    for (let i = 0; i < data.length; i++) {
-      const sample = (data[i] - 128) / 128;
-      sum += sample * sample;
-    }
-
-    const rms = Math.sqrt(sum / data.length);
-    const level = clamp(rms * 220, 0, 100);
-
-    const meter = $("levelMeter");
-
-    if (meter) {
-      meter.style.width = level + "%";
-      meter.setAttribute("aria-valuenow", String(level));
-    }
-
-    const outputLevel = $("outputLevel");
-
-    if (outputLevel) {
-      outputLevel.textContent = Math.round(level) + "%";
-    }
-
-    requestAnimationFrame(updateLevelMeter);
-  }
-
-  /* =======================================================
-     NAVIGATION
-  ======================================================= */
-
-  document.querySelectorAll("[data-section-target]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const target = button.dataset.sectionTarget;
-
-      document.querySelectorAll("[data-section]").forEach((section) => {
-        section.hidden =
-          section.dataset.section !== target;
+      navItems.forEach((nav) => {
+        nav.classList.toggle(
+          "active",
+          nav === item
+        );
       });
 
-      document.querySelectorAll("[data-section-target]").forEach((item) => {
-        item.classList.toggle("active", item === button);
+      target.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
       });
     });
   });
 
-  /* =======================================================
-     KEYBOARD INITIALIZATION
-  ======================================================= */
+  /* =========================================================
+     CLEANUP
+     ========================================================= */
 
-  bindVirtualKeyboard();
+  window.addEventListener("beforeunload", () => {
+    stopAllSources();
+    stopKeyboardVoices();
 
-  /*
-   * If keyboard keys are created dynamically later,
-   * call bindVirtualKeyboard() again after creating them.
-   */
+    clearInterval(playbackTimer);
 
-  /* =======================================================
+    if (meterAnimationFrame) {
+      cancelAnimationFrame(meterAnimationFrame);
+    }
+
+    if (microphoneStream) {
+      microphoneStream.getTracks().forEach(
+        (track) => track.stop()
+      );
+    }
+  });
+
+  /* =========================================================
      INITIALIZATION
-  ======================================================= */
+     ========================================================= */
 
-  updateMasterControls();
-  updateEffectControls();
+  if (stopRecordBtn) {
+    stopRecordBtn.disabled = true;
+  }
+
+  updateControlLabels();
+  renderTracks();
   updateTransportDisplay();
 
-  setText("speedValue", getNumber("speedControl", 1).toFixed(2) + "x");
-  setText("pitchValue", getNumber("pitchControl", 0).toFixed(1) + " semitones");
-
-  setStatus("Studio ready");
-
-  updateLevelMeter();
+  setStatus(
+    "Studio ready. Upload audio to begin."
+  );
 
   console.log(
-    "Naol Music Studio initialized: tracks, keyboard, recording, Auto Mix and WAV export."
+    "Naol Music Studio initialized successfully."
   );
 });
